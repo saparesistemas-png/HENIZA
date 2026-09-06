@@ -1,0 +1,11 @@
+{
+  "name": "Gestão de Operações Automotivas IA",
+  "description": "Gestão completa de operações automotivas com diagnóstico de imagem e áudio por Inteligência Artificial (Gemini), fluxo offline de sincronização, orçamentos, estoque automatizado e alertas integrados para WhatsApp e Teams.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

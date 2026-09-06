@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-bebas: "Bebas Neue", sans-serif;
+  --font-serif: "Playfair Display", serif;
+  
+  --color-tech-fundo: #060907;
+  --color-tech-cartao: #0C130F;
+  --color-tech-destaque: #00FF66;
+  --color-tech-texto: #F8FAFC;
+  --color-tech-secundario: #8B9A90;
+  --color-tech-borda: rgba(0, 255, 102, 0.12);
+  --color-tech-sucesso: #00FF66;
+  --color-tech-alerta: #F59E0B;
+  
+  --color-sapare-teal: #00FF66;
+  --color-sapare-gold: #D4AF37;
+  --color-sapare-violet: #10B981;
+  --color-sapare-violet2: #34D399;
+  --color-sapare-glass: #00E5FF;
+  --color-sapare-dark: #060907;
+  --color-sapare-card: #0C130F;
+}
+
+@layer utilities {
+  .animate-fadeIn {
+    animation: fadeIn 0.4s ease-out forwards;
+  }
+  .animate-slideUp {
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-pulseSoft {
+    animation: pulseSoft 2s infinite ease-in-out;
+  }
+  .glow-green {
+    box-shadow: 0 0 25px -4px rgba(0, 255, 102, 0.25);
+  }
+  .glow-green-sm {
+    box-shadow: 0 0 12px -2px rgba(0, 255, 102, 0.3);
+  }
+  .circuit-border {
+    border: 1px solid rgba(0, 255, 102, 0.2);
+    background: linear-gradient(135deg, rgba(12, 19, 15, 0.95), rgba(8, 14, 10, 0.98));
+  }
+  /* Hide scrollbar for clean mobile horizontal chip scrolls */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Custom shadow polish */
+.glow-indigo {
+  box-shadow: 0 0 20px -5px rgba(99, 102, 241, 0.15);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 20px -5px rgba(16, 185, 129, 0.15);
+}
