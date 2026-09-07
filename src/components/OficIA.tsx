@@ -76,6 +76,7 @@ export default function OficIA({
   const [aiResponse, setAiResponse] = useState<any>(null);
   const [whatsappShareUrl, setWhatsappShareUrl] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState<boolean>(false);
 
   // Server & AI Connection Info
   const [serverInfo, setServerInfo] = useState<{ status: string; aiConnected: boolean; model: string } | null>(null);
@@ -855,7 +856,24 @@ export default function OficIA({
             </div>
           </div>
 
-          {/* Banner de Classificação Autodidata & Origem */}
+          <button
+            type="button"
+            onClick={() => setShowTechnicalDetails((visible) => !visible)}
+            aria-expanded={showTechnicalDetails}
+            className="w-full flex items-center justify-between gap-3 rounded-xl border border-tech-borda bg-tech-fundo/60 px-4 py-3 text-left transition hover:border-tech-destaque/50"
+          >
+            <span className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-tech-texto">
+              <BookOpen className="w-4 h-4 text-tech-destaque" />
+              Resumo técnico do diagnóstico
+            </span>
+            <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-tech-secundario">
+              {showTechnicalDetails ? 'Ocultar detalhes' : 'Ver detalhes'}
+              {showTechnicalDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </span>
+          </button>
+
+          {showTechnicalDetails && <div className="flex flex-col gap-5 animate-slideUp">
+            {/* Banner de Classificação Autodidata & Origem */}
           <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
             aiResponse.codeType === 'DIAGNOSTICO_EV_ALTA_TENSAO' || aiResponse.originBadge?.includes('ELÉTRICO') || aiResponse.originBadge?.includes('EV')
               ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300'
@@ -982,6 +1000,7 @@ export default function OficIA({
               </span>
             </div>
           </div>
+          </div>}
 
           {/* Barra de Ações: WhatsApp, Imprimir, Copiar, Novo Diagnóstico */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 pt-4 border-t border-tech-borda">
