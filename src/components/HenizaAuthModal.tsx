@@ -57,7 +57,7 @@ export default function HenizaAuthModal({
 
   if (!isOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessNotice(null);
@@ -68,29 +68,27 @@ export default function HenizaAuthModal({
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const result = authenticateUser(email, password);
+    const result = await authenticateUser(email, password);
+    setIsLoading(false);
 
-      if (!result.success || !result.user) {
-        setErrorMessage(result.message);
-        return;
-      }
+    if (!result.success || !result.user) {
+      setErrorMessage(result.message);
+      return;
+    }
 
-      const authUser: AuthUser = {
-        name: result.user.name,
-        email: result.user.email,
-        workshop: result.user.workshop,
-        role: result.user.role,
-        loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isAdmin: result.user.isAdmin
-      };
+    const authUser: AuthUser = {
+      name: result.user.name,
+      email: result.user.email,
+      workshop: result.user.workshop,
+      role: result.user.role,
+      loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isAdmin: result.user.isAdmin
+    };
 
-      onSuccess(authUser);
-    }, 400);
+    onSuccess(authUser);
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessNotice(null);
@@ -106,55 +104,33 @@ export default function HenizaAuthModal({
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const result = requestRegistration({
-        name,
-        email,
-        password,
-        workshop
-      });
+    const result = await requestRegistration({ name, email, password, workshop });
+    setIsLoading(false);
 
-      if (!result.success) {
-        setErrorMessage(result.message);
-        return;
-      }
+    if (!result.success) {
+      setErrorMessage(result.message);
+      return;
+    }
 
-      // Success: notify registrant that admin needs to authorize
-      setSuccessNotice(
-        `Solicitação enviada com sucesso! O administrador (${ADMIN_CREDENTIALS.email}) recebeu o seu pedido de acesso. Assim que for autorizado, você poderá fazer login.`
-      );
-      // Clear sensitive fields
-      setPassword('');
-    }, 500);
+    setSuccessNotice(result.message);
+    setPassword('');
   };
 
   const fillAdminCredentials = () => {
-    setEmail(ADMIN_CREDENTIALS.email);
-    setPassword(ADMIN_CREDENTIALS.password);
+    setEmail('');
+    setPassword('');
     setTab('login');
     setErrorMessage('');
     setSuccessNotice('Credenciais do Administrador preenchidas. Clique em "Entrar no Sistema".');
   };
 
-  const handleQuickDemoAccess = () => {
+  const handleQuickDemoAccess = async () => {
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      // Authenticates with pre-approved technician
-      const result = authenticateUser('carlos.mecanico@oficia.com.br', '123');
-      if (result.success && result.user) {
-        const authUser: AuthUser = {
-          name: result.user.name,
-          email: result.user.email,
-          workshop: result.user.workshop,
-          role: result.user.role,
-          loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isAdmin: false
-        };
-        onSuccess(authUser);
-      }
-    }, 300);
+    const result = await authenticateUser('carlos.mecanico@oficia.com.br', '12345678');
+    setIsLoading(false);
+    if (result.success && result.user) {
+      onSuccess({ ...result.user, loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isAdmin: false });
+    }
   };
 
   return (

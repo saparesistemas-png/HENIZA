@@ -37,8 +37,8 @@ export default function AdminAccessModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [notification, setNotification] = useState<string | null>(null);
 
-  const loadUsers = () => {
-    const list = getStoredUsers();
+  const loadUsers = async () => {
+    const list = await getStoredUsers();
     setUsers(list);
   };
 
@@ -50,8 +50,8 @@ export default function AdminAccessModal({
 
   if (!isOpen) return null;
 
-  const handleApprove = (userId: string, name: string) => {
-    const res = setRequestStatus(userId, 'aprovado');
+  const handleApprove = async (userId: string, name: string) => {
+    const res = await setRequestStatus(userId, 'aprovado');
     if (res.success) {
       setNotification(`Acesso de "${name}" AUTORIZADO com sucesso!`);
       loadUsers();
@@ -60,8 +60,8 @@ export default function AdminAccessModal({
     }
   };
 
-  const handleReject = (userId: string, name: string) => {
-    const res = setRequestStatus(userId, 'recusado');
+  const handleReject = async (userId: string, name: string) => {
+    const res = await setRequestStatus(userId, 'recusado');
     if (res.success) {
       setNotification(`Pedido de "${name}" RECUSADO.`);
       loadUsers();
@@ -70,9 +70,9 @@ export default function AdminAccessModal({
     }
   };
 
-  const handleDelete = (userId: string, name: string) => {
+  const handleDelete = async (userId: string, name: string) => {
     if (window.confirm(`Tem certeza que deseja remover o registro de "${name}"?`)) {
-      deleteUserRequest(userId);
+      await deleteUserRequest(userId);
       setNotification(`Registro de "${name}" removido.`);
       loadUsers();
       if (onStatusChange) onStatusChange();

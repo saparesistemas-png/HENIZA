@@ -9,6 +9,8 @@ import health from './api/health';
 import budgets from './api/budgets';
 import stock from './api/stock';
 import history from './api/history';
+import auth from './api/auth';
+import admin from './api/admin';
 
 dotenv.config();
 
@@ -21,6 +23,9 @@ async function start() {
   app.use(express.json({ limit: '25mb' }));
 
   app.get('/api/health', asExpress(health));
+  app.all('/api/auth/:action', asExpress(auth));
+  app.all('/api/admin/users', asExpress(admin));
+  app.all('/api/admin/users/:id', asExpress(admin));
   app.post('/api/diagnose', asExpress(diagnose));
   app.post('/api/gemini/diagnosis', asExpress(diagnose));
   app.post('/api/budgets', asExpress(budgets));
