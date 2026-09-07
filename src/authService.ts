@@ -30,6 +30,10 @@ const USERS_KEY = 'heniza_users_v2';
 const SESSION_KEY = 'heniza_session_v2';
 const BOOTSTRAP_ADMIN_EMAIL = 'admin@heniza.local';
 
+export const ADMIN_CREDENTIALS = {
+  email: BOOTSTRAP_ADMIN_EMAIL,
+};
+
 async function generateSalt(): Promise<string> {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');

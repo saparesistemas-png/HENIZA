@@ -32,6 +32,7 @@ import HenizaInstrucoes from './components/HenizaInstrucoes';
 import HenizaParceiro from './components/HenizaParceiro';
 import HenizaAuthModal, { AuthUser } from './components/HenizaAuthModal';
 import AdminAccessModal from './components/AdminAccessModal';
+import AdminDashboard from './components/AdminDashboard';
 import InstallMobileModal from './components/InstallMobileModal';
 import { getPendingCount, ADMIN_CREDENTIALS } from './authService';
 
@@ -49,7 +50,7 @@ export default function App() {
   const [lang, setLang] = useState<SelectedLang>('pt');
   
   // Navigation: 'home' (opening with clear instructions & 3 buttons) | 'diagnostico' | 'instrucoes' | 'parceiro'
-  const [activeView, setActiveView] = useState<'home' | 'diagnostico' | 'instrucoes' | 'parceiro'>('home');
+  const [activeView, setActiveView] = useState<'home' | 'diagnostico' | 'instrucoes' | 'parceiro' | 'admin'>('home');
 
   // Authentication State
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
@@ -76,7 +77,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleNavigate = (view: 'home' | 'diagnostico' | 'instrucoes' | 'parceiro') => {
+  const handleNavigate = (view: 'home' | 'diagnostico' | 'instrucoes' | 'parceiro' | 'admin') => {
     if (view === 'diagnostico' || view === 'instrucoes') {
       if (!authUser) {
         setPendingView(view);
@@ -261,7 +262,7 @@ export default function App() {
                 {/* Admin Management Button (Visible when logged in as Admin) */}
                 {(authUser.isAdmin || authUser.email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase()) && (
                   <button
-                    onClick={() => setIsAdminModalOpen(true)}
+                    onClick={() => setActiveView('admin')}
                     className="relative text-[10px] font-mono font-bold text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.2)] shrink-0"
                     title="Abrir Painel de Autorizações e Pedidos de Acesso"
                   >
@@ -415,6 +416,23 @@ export default function App() {
             isLoggedIn={!!authUser} 
             onOpenInstallModal={() => setIsInstallModalOpen(true)}
           />
+        )}
+
+        {activeView === 'admin' && (
+          authUser && (authUser.isAdmin || authUser.email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase()) ? (
+            <AdminDashboard
+              currentUser={authUser}
+              onBack={() => setActiveView('home')}
+              onStatusChange={() => setPendingRequestsCount(getPendingCount())}
+            />
+          ) : (
+            <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-500/40 bg-tech-cartao p-8 text-center shadow-2xl">
+              <ShieldCheck className="mx-auto mb-3 size-10 text-amber-300" />
+              <h2 className="text-xl font-black text-white">Acesso administrativo restrito</h2>
+              <p className="mt-2 text-sm text-slate-400">Entre com uma conta de administrador para acessar esta área.</p>
+              <button onClick={() => setActiveView('home')} className="mt-5 rounded-xl bg-tech-destaque px-4 py-2 text-xs font-black text-tech-fundo">Voltar ao início</button>
+            </div>
+          )
         )}
 
         {activeView === 'diagnostico' && (
