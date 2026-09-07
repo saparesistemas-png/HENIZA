@@ -1,297 +1,207 @@
-// Centralized Authentication and Access Authorization Service for OficIA
+// Secure authentication — Web Crypto, no plaintext passwords in source
+
+export type UserRole = 'Administrador' | 'Técnico Especialista' | 'Operador de Oficina';
+export type UserStatus = 'aprovado' | 'pendente' | 'recusado';
 
 export interface SystemUser {
   id: string;
   name: string;
   email: string;
-  password?: string;
+  passwordHash: string;
+  salt: string;
   workshop?: string;
-  role: 'Administrador' | 'Técnico Especialista' | 'Operador de Oficina';
-  status: 'aprovado' | 'pendente' | 'recusado';
+  role: UserRole;
+  status: UserStatus;
   requestedAt: string;
   reviewedAt?: string;
   isAdmin?: boolean;
 }
 
-export const ADMIN_CREDENTIALS = {
-  email: 'natanaelmessiasdesouza@gmail.com',
-  password: '721634@Smn',
-  name: 'Natanael Messias (Administrador)',
-  role: 'Administrador' as const,
-  workshop: 'Diretoria Executiva HENIZA / OficIA',
-  isAdmin: true
-};
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  workshop?: string;
+  isAdmin?: boolean;
+}
 
-const USERS_STORAGE_KEY = 'oficia_system_users';
-const CURRENT_USER_KEY = 'oficia_auth_user';
+const USERS_KEY = 'heniza_users_v2';
+const SESSION_KEY = 'heniza_session_v2';
+const BOOTSTRAP_ADMIN_EMAIL = 'admin@heniza.local';
 
-// Initialize pre-seeded users (Admin + default demo technicians)
+async function generateSalt(): Promise<string> {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(password: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + salt);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyPassword(password: string, salt: string, expectedHash: string): Promise<boolean> {
+  const hash = await hashPassword(password, salt);
+  return hash === expectedHash;
+}
+
+function loadUsers(): SystemUser[] {
+  try {
+    const raw = localStorage.getItem(USERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUsers(users: SystemUser[]): void {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+
+export async function ensureBootstrapAdmin(initialPassword: string): Promise<void> {
+  const users = loadUsers();
+  if (users.some((u) => u.isAdmin === true)) return;
+  const salt = await generateSalt();
+  const passwordHash = await hashPassword(initialPassword, salt);
+  users.unshift({
+    id: 'admin-01',
+    name: 'Administrador HENIZA',
+    email: BOOTSTRAP_ADMIN_EMAIL,
+    passwordHash,
+    salt,
+    workshop: 'Diretoria Executiva',
+    role: 'Administrador',
+    status: 'aprovado',
+    requestedAt: new Date().toISOString(),
+    isAdmin: true,
+  });
+  saveUsers(users);
+}
+
 export function getStoredUsers(): SystemUser[] {
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (raw) {
-      const parsed: SystemUser[] = JSON.parse(raw);
-      // Ensure admin is always present and updated
-      const hasAdmin = parsed.some(u => u.email.toLowerCase() === ADMIN_CREDENTIALS.email.toLowerCase());
-      if (!hasAdmin) {
-        parsed.unshift({
-          id: 'admin-01',
-          name: ADMIN_CREDENTIALS.name,
-          email: ADMIN_CREDENTIALS.email,
-          password: ADMIN_CREDENTIALS.password,
-          workshop: ADMIN_CREDENTIALS.workshop,
-          role: 'Administrador',
-          status: 'aprovado',
-          requestedAt: new Date().toISOString(),
-          isAdmin: true
-        });
-        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(parsed));
-      }
-      return parsed;
-    }
-  } catch (err) {
-    console.error('Error reading users from storage:', err);
-  }
-
-  // Initial seed
-  const initialUsers: SystemUser[] = [
-    {
-      id: 'admin-01',
-      name: ADMIN_CREDENTIALS.name,
-      email: ADMIN_CREDENTIALS.email,
-      password: ADMIN_CREDENTIALS.password,
-      workshop: ADMIN_CREDENTIALS.workshop,
-      role: 'Administrador',
-      status: 'aprovado',
-      requestedAt: new Date().toISOString(),
-      isAdmin: true
-    },
-    {
-      id: 'user-demo-01',
-      name: 'Carlos Alberto Mecânico',
-      email: 'carlos.mecanico@oficia.com.br',
-      password: '123',
-      workshop: 'Auto Center Paulista',
-      role: 'Técnico Especialista',
-      status: 'aprovado',
-      requestedAt: new Date(Date.now() - 86400000).toISOString(),
-      isAdmin: false
-    },
-    {
-      id: 'user-pendente-01',
-      name: 'Eduardo Martins',
-      email: 'eduardo.martins@autofrota.com.br',
-      password: '123',
-      workshop: 'Locadora & Frotas Sul',
-      role: 'Operador de Oficina',
-      status: 'pendente',
-      requestedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-      isAdmin: false
-    }
-  ];
-
-  try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(initialUsers));
-  } catch (e) {
-    console.error(e);
-  }
-
-  return initialUsers;
+  return loadUsers();
 }
 
-export function saveUsers(users: SystemUser[]): void {
-  try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-  } catch (err) {
-    console.error('Error saving users to storage:', err);
-  }
+export function getPendingCount(): number {
+  return loadUsers().filter((u) => u.status === 'pendente').length;
 }
 
-// Check current user session
-export function getCurrentSession(): SystemUser | null {
+export function getCurrentSession(): AuthUser | null {
   try {
-    const raw = localStorage.getItem(CURRENT_USER_KEY);
+    const raw = localStorage.getItem(SESSION_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-export function saveCurrentSession(user: SystemUser | null): void {
-  try {
-    if (user) {
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(CURRENT_USER_KEY);
-    }
-  } catch (err) {
-    console.error(err);
-  }
+function saveSession(user: AuthUser | null): void {
+  if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  else localStorage.removeItem(SESSION_KEY);
 }
 
-// Request new registration (pending authorization)
-export function requestRegistration(data: {
+export async function requestRegistration(data: {
   name: string;
   email: string;
   password: string;
   workshop?: string;
-}): { success: boolean; message: string; user?: SystemUser } {
-  const users = getStoredUsers();
-  const normalizedEmail = data.email.trim().toLowerCase();
-
-  // Check if admin
-  if (normalizedEmail === ADMIN_CREDENTIALS.email.toLowerCase()) {
-    return {
-      success: false,
-      message: 'Este e-mail pertence ao Administrador do Sistema. Por favor, faça login diretamente.'
-    };
+}): Promise<{ success: boolean; message: string }> {
+  const users = loadUsers();
+  const email = data.email.trim().toLowerCase();
+  if (users.some((u) => u.email === email)) {
+    return { success: false, message: 'Este e-mail já possui cadastro ou pedido em análise.' };
   }
-
-  const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
-  if (existing) {
-    if (existing.status === 'pendente') {
-      return {
-        success: false,
-        message: 'Já existe um pedido de acesso em análise com este e-mail. Aguarde a liberação do administrador.'
-      };
-    }
-    if (existing.status === 'aprovado') {
-      return {
-        success: false,
-        message: 'Este e-mail já possui cadastro aprovado. Realize o login com sua senha.'
-      };
-    }
-    if (existing.status === 'recusado') {
-      return {
-        success: false,
-        message: 'Este cadastro foi recusado anteriormente pelo administrador. Entre em contato para reavaliação.'
-      };
-    }
-  }
-
-  const newUser: SystemUser = {
+  const salt = await generateSalt();
+  const passwordHash = await hashPassword(data.password.trim(), salt);
+  users.push({
     id: 'req-' + Date.now(),
     name: data.name.trim(),
-    email: normalizedEmail,
-    password: data.password.trim(),
+    email,
+    passwordHash,
+    salt,
     workshop: data.workshop?.trim() || 'Oficina Automotiva',
     role: 'Técnico Especialista',
     status: 'pendente',
     requestedAt: new Date().toISOString(),
-    isAdmin: false
-  };
-
-  users.push(newUser);
+    isAdmin: false,
+  });
   saveUsers(users);
-
-  return {
-    success: true,
-    message: 'Solicitação de cadastro registrada com sucesso! O pedido de acesso foi enviado ao Administrador (natanaelmessiasdesouza@gmail.com). Aguarde a autorização para efetuar o login.',
-    user: newUser
-  };
+  return { success: true, message: 'Solicitação enviada. Aguarde aprovação do administrador.' };
 }
 
-// Authenticate user
-export function authenticateUser(email: string, password: string): {
-  success: boolean;
-  message: string;
-  user?: SystemUser;
-} {
-  const normalizedEmail = email.trim().toLowerCase();
-  const pass = password.trim();
-
-  // 1. Direct Admin validation
-  if (
-    normalizedEmail === ADMIN_CREDENTIALS.email.toLowerCase() &&
-    pass === ADMIN_CREDENTIALS.password
-  ) {
-    const adminUser: SystemUser = {
-      id: 'admin-01',
-      name: ADMIN_CREDENTIALS.name,
-      email: ADMIN_CREDENTIALS.email,
-      role: 'Administrador',
-      workshop: ADMIN_CREDENTIALS.workshop,
-      status: 'aprovado',
-      requestedAt: new Date().toISOString(),
-      isAdmin: true
-    };
-    saveCurrentSession(adminUser);
-    return {
-      success: true,
-      message: 'Autenticado com sucesso como Administrador do Sistema OficIA.',
-      user: adminUser
-    };
-  }
-
-  // 2. Check other stored accounts
-  const users = getStoredUsers();
-  const matched = users.find(u => u.email.toLowerCase() === normalizedEmail);
-
-  if (!matched) {
-    return {
-      success: false,
-      message: 'Usuário não cadastrado. Caso tenha acabado de solicitar, aguarde a aprovação do Administrador.'
-    };
-  }
-
-  // Password check
-  if (matched.password !== pass) {
-    return {
-      success: false,
-      message: 'Senha incorreta. Verifique suas credenciais.'
-    };
-  }
-
-  // Status check
-  if (matched.status === 'pendente') {
-    return {
-      success: false,
-      message: 'Seu cadastro está PENDENTE DE AUTORIZAÇÃO pelo Administrador (natanaelmessiasdesouza@gmail.com). Você será notificado assim que o acesso for liberado.'
-    };
-  }
-
-  if (matched.status === 'recusado') {
-    return {
-      success: false,
-      message: 'Seu pedido de acesso foi RECUSADO pelo administrador. Contate o suporte para mais informações.'
-    };
-  }
-
-  // Approved
-  saveCurrentSession(matched);
-  return {
-    success: true,
-    message: `Acesso autorizado. Bem-vindo, ${matched.name}!`,
-    user: matched
+export async function authenticateUser(
+  email: string,
+  password: string
+): Promise<{ success: boolean; message: string; user?: AuthUser }> {
+  const users = loadUsers();
+  const normalized = email.trim().toLowerCase();
+  const matched = users.find((u) => u.email === normalized);
+  if (!matched) return { success: false, message: 'Usuário não encontrado.' };
+  const valid = await verifyPassword(password.trim(), matched.salt, matched.passwordHash);
+  if (!valid) return { success: false, message: 'Senha incorreta.' };
+  if (matched.status === 'pendente') return { success: false, message: 'Cadastro pendente de aprovação.' };
+  if (matched.status === 'recusado') return { success: false, message: 'Acesso recusado. Contate o administrador.' };
+  const sessionUser: AuthUser = {
+    id: matched.id,
+    name: matched.name,
+    email: matched.email,
+    role: matched.role,
+    workshop: matched.workshop,
+    isAdmin: matched.isAdmin,
   };
+  saveSession(sessionUser);
+  return { success: true, message: `Bem-vindo, ${matched.name}!`, user: sessionUser };
 }
 
-// Administrator actions: Approve or Reject
-export function setRequestStatus(
-  userId: string,
-  newStatus: 'aprovado' | 'recusado'
-): { success: boolean; user?: SystemUser } {
-  const users = getStoredUsers();
-  const index = users.findIndex(u => u.id === userId);
+export function setRequestStatus(userId: string, newStatus: 'aprovado' | 'recusado'): { success: boolean } {
+  const users = loadUsers();
+  const index = users.findIndex((u) => u.id === userId);
   if (index === -1) return { success: false };
-
   users[index].status = newStatus;
   users[index].reviewedAt = new Date().toISOString();
   saveUsers(users);
-
-  return { success: true, user: users[index] };
+  return { success: true };
 }
 
-// Administrator action: Delete user request
 export function deleteUserRequest(userId: string): boolean {
-  let users = getStoredUsers();
-  users = users.filter(u => u.id !== userId);
-  saveUsers(users);
+  saveUsers(loadUsers().filter((u) => u.id !== userId));
   return true;
 }
 
-// Count pending requests
-export function getPendingCount(): number {
-  const users = getStoredUsers();
-  return users.filter(u => u.status === 'pendente').length;
+export function logout(): void {
+  saveSession(null);
+}
+
+export async function migrateFromLegacyIfNeeded(): Promise<void> {
+  const legacyKey = 'oficia_system_users';
+  const legacyRaw = localStorage.getItem(legacyKey);
+  if (!legacyRaw) return;
+  try {
+    const legacyUsers = JSON.parse(legacyRaw);
+    const current = loadUsers();
+    for (const old of legacyUsers) {
+      if (current.some((u) => u.email === old.email?.toLowerCase())) continue;
+      if (!old.password) continue;
+      const salt = await generateSalt();
+      const passwordHash = await hashPassword(old.password, salt);
+      current.push({
+        id: old.id || 'migrated-' + Date.now(),
+        name: old.name,
+        email: old.email.toLowerCase(),
+        passwordHash,
+        salt,
+        workshop: old.workshop,
+        role: old.role || 'Técnico Especialista',
+        status: old.status || 'aprovado',
+        requestedAt: old.requestedAt || new Date().toISOString(),
+        isAdmin: old.isAdmin || false,
+      });
+    }
+    saveUsers(current);
+    localStorage.removeItem(legacyKey);
+  } catch (err) {
+    console.error('[HENIZA] Migration failed:', err);
+  }
 }
