@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getGenAIClient, withTimeout, extractJson } from './_lib/gemini';
 import { validateDiagnosePayload, type DiagnosePayload } from './_lib/validate';
 import { resolveAutomotiveFaultKnowledge } from './_lib/fallback';
+import { formatKnowledgeForPrompt, getApprovedKnowledge } from './_lib/knowledge';
 
 export const config = {
   maxDuration: 60,
@@ -9,7 +10,7 @@ export const config = {
 
 const REQUEST_TIMEOUT_MS = 45_000;
 
-function buildPrompt(p: DiagnosePayload): string {
+function buildPrompt(p: DiagnosePayload, approvedKnowledge: string): string {
   return `
 Você é o Consultor Técnico Sênior em Engenharia Automotiva & EV da OficIA / HENIZA.
 
@@ -22,6 +23,9 @@ DADOS:
 - EV alternativo: ${p.isEvAlternative ? 'SIM' : 'NÃO'}
 - Relato: "${p.description || 'Análise multimodal'}"
 - Modo: ${p.mode || 'Multimodal'}
+
+BASE DE CONHECIMENTO TÉCNICO APROVADA (use como evidência, não como verdade absoluta):
+${approvedKnowledge}
 
 REGRAS:
 1. Código 1-3 dígitos = PAINEL_INSTRUMENTOS (não scanner).
@@ -67,11 +71,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const payload = validation.payload;
+  const approvedKnowledge = formatKnowledgeForPrompt(
+    await getApprovedKnowledge(payload.make || '', payload.model || '')
+  );
   const ai = getGenAIClient();
 
   if (ai) {
     try {
-      const parts: any[] = [{ text: buildPrompt(payload) }];
+      const parts: any[] = [{ text: buildPrompt(payload, approvedKnowledge) }];
 
       if (payload.image?.startsWith('data:image')) {
         const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
