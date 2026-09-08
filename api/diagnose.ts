@@ -58,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const startedAt = Date.now();
   const validation = validateDiagnosePayload(req.body);
 
-  if (!validation.ok) {
+  if (validation.ok === false) {
     return res.status(400).json({
       ok: false,
       error: validation.message,

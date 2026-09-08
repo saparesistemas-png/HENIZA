@@ -57,7 +57,7 @@ export default function HenizaAuthModal({
 
   if (!isOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessNotice(null);
@@ -68,9 +68,9 @@ export default function HenizaAuthModal({
     }
 
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      const result = await authenticateUser(email, password);
       setIsLoading(false);
-      const result = authenticateUser(email, password);
 
       if (!result.success || !result.user) {
         setErrorMessage(result.message);
@@ -87,10 +87,15 @@ export default function HenizaAuthModal({
       };
 
       onSuccess(authUser);
-    }, 400);
+    } catch (error) {
+      console.error('[v0] Falha no login:', error);
+      setErrorMessage('Não foi possível concluir o login.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessNotice(null);
@@ -106,9 +111,8 @@ export default function HenizaAuthModal({
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const result = requestRegistration({
+    try {
+      const result = await requestRegistration({
         name,
         email,
         password,
@@ -126,7 +130,12 @@ export default function HenizaAuthModal({
       );
       // Clear sensitive fields
       setPassword('');
-    }, 500);
+    } catch (error) {
+      console.error('[v0] Falha no cadastro:', error);
+      setErrorMessage('Não foi possível enviar o cadastro.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const fillAdminCredentials = () => {
@@ -139,11 +148,11 @@ export default function HenizaAuthModal({
 
   const handleQuickDemoAccess = () => {
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      // Authenticates with pre-approved technician
-      const result = authenticateUser('carlos.mecanico@oficia.com.br', '123');
-      if (result.success && result.user) {
+    setTimeout(async () => {
+      try {
+        // Authenticates with pre-approved technician
+        const result = await authenticateUser('carlos.mecanico@oficia.com.br', '123');
+        if (result.success && result.user) {
         const authUser: AuthUser = {
           name: result.user.name,
           email: result.user.email,
@@ -152,7 +161,12 @@ export default function HenizaAuthModal({
           loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isAdmin: false
         };
-        onSuccess(authUser);
+          onSuccess(authUser);
+        }
+      } catch (error) {
+        console.error('[v0] Falha no acesso demo:', error);
+      } finally {
+        setIsLoading(false);
       }
     }, 300);
   };

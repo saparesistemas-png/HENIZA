@@ -1,4 +1,11 @@
-import type { CapacitorConfig } from '@capacitor/cli';
+type CapacitorConfig = {
+  appId: string;
+  appName: string;
+  webDir: string;
+  server?: { androidScheme: string };
+  android?: { allowMixedContent: boolean };
+  plugins?: Record<string, Record<string, unknown>>;
+};
 
 const config: CapacitorConfig = {
   appId: 'tech.heniza.oficia',
