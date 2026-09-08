@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-export type ApiHandler = (req: any, res: any) => void | Promise<void>;
+export type ApiHandler = (req: any, res: any) => void | Promise<unknown>;
 
 export function asExpress(handler: ApiHandler) {
   return async (req: Request, res: Response) => {

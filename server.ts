@@ -5,6 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { asExpress } from './api/_lib/nodeHandler';
 import diagnose from './api/diagnose';
+import chat from './api/chat';
 import health from './api/health';
 import budgets from './api/budgets';
 import stock from './api/stock';
@@ -23,6 +24,7 @@ async function start() {
   app.get('/api/health', asExpress(health));
   app.post('/api/diagnose', asExpress(diagnose));
   app.post('/api/gemini/diagnosis', asExpress(diagnose));
+  app.post('/api/chat', asExpress(chat));
   app.post('/api/budgets', asExpress(budgets));
   app.post('/api/stock', asExpress(stock));
   app.post('/api/history', asExpress(history));
