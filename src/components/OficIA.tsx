@@ -357,7 +357,7 @@ export default function OficIA({
       {/* =========================================================================
           HERO & IDENTIDADE OFICIA
           ========================================================================= */}
-      <div className="bg-tech-cartao border-2 border-tech-destaque/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+      <div className="hidden">
         {/* Glow & Circuit Background Accents */}
         <div className="absolute top-0 right-0 w-64 h-32 bg-tech-destaque/10 blur-3xl pointer-events-none -z-0" />
         <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-tech-destaque via-cyan-400 to-tech-destaque" />
@@ -412,7 +412,7 @@ export default function OficIA({
       <section id="tela-descricao" className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-5">
         
         {/* Bloco de Identificação do Veículo (Placa, Chassi / VIN, Montadora e Modelo) */}
-        <div className="space-y-3.5 sm:space-y-4 border-b border-tech-borda pb-4 sm:pb-5">
+        <div className="hidden">
           
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-[11px] font-black text-tech-texto uppercase tracking-wide">
@@ -601,7 +601,7 @@ export default function OficIA({
 
           {/* Módulo de Diagnóstico Alternativo para Carros Elétricos (EV) */}
           {(currentModel?.category === 'EV' || currentModel?.category === 'HYBRID' || isEvAlternativeMode) && (
-            <div className="bg-gradient-to-r from-cyan-950/40 via-tech-fundo to-cyan-950/40 border border-cyan-500/40 rounded-xl p-3.5 space-y-2">
+            <div className="hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <div className="bg-cyan-500/20 p-1.5 rounded-lg text-cyan-400 border border-cyan-500/40">
@@ -678,7 +678,7 @@ export default function OficIA({
         </div>
 
         {/* Atalhos Rápidos de Sintomas e Códigos */}
-        <div className="space-y-1.5">
+        <div className="hidden">
           <div className="flex items-center justify-between">
             <label className="text-[10px] font-black text-tech-secundario uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-tech-destaque" />
@@ -856,7 +856,7 @@ export default function OficIA({
           </div>
 
           {/* Banner de Classificação Autodidata & Origem */}
-          <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+          <div className={`hidden p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
             aiResponse.codeType === 'DIAGNOSTICO_EV_ALTA_TENSAO' || aiResponse.originBadge?.includes('ELÉTRICO') || aiResponse.originBadge?.includes('EV')
               ? 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300'
               : aiResponse.codeType === 'PAINEL_INSTRUMENTOS' || aiResponse.originBadge?.includes('PAINEL')
@@ -906,7 +906,7 @@ export default function OficIA({
             }`}>
               <h4 className="text-[11px] font-black text-tech-destaque uppercase tracking-wider flex items-center gap-1.5">
                 <RotateCcw className="w-4 h-4 text-tech-destaque" />
-                <span>Procedimento de Reparo, Reset ou Desbloqueio Alternativo</span>
+                <span>Instruções da IA</span>
               </h4>
               <p className="text-xs md:text-sm font-mono font-bold text-tech-texto/95 leading-relaxed whitespace-pre-line">
                 {aiResponse.resetProcedure}
@@ -915,7 +915,7 @@ export default function OficIA({
           )}
 
           {/* Checklists: Corretivo e Preventivo */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="hidden grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Checklist Corretivo */}
             <div className="bg-tech-fundo/60 p-4 rounded-xl border border-tech-borda space-y-2">
               <h4 className="text-[10px] font-black text-tech-destaque uppercase tracking-wider flex items-center gap-1.5">
@@ -950,7 +950,7 @@ export default function OficIA({
           </div>
 
           {/* Tabela de Orçamento Estimado */}
-          <div className="bg-tech-fundo p-4 rounded-xl border border-tech-borda space-y-3">
+          <div className="hidden bg-tech-fundo p-4 rounded-xl border border-tech-borda space-y-3">
             <div className="flex justify-between items-center border-b border-tech-borda pb-2">
               <h4 className="text-[10px] font-black text-tech-secundario uppercase tracking-wider flex items-center gap-1.5">
                 <FileCheck className="w-3.5 h-3.5 text-tech-destaque" />
