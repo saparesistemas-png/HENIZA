@@ -10,6 +10,7 @@ import health from './api/health';
 import budgets from './api/budgets';
 import stock from './api/stock';
 import history from './api/history';
+import knowledge from './api/knowledge';
 
 dotenv.config();
 
@@ -28,6 +29,10 @@ async function start() {
   app.post('/api/budgets', asExpress(budgets));
   app.post('/api/stock', asExpress(stock));
   app.post('/api/history', asExpress(history));
+  app.get('/api/knowledge', asExpress(knowledge));
+  app.post('/api/knowledge', asExpress(knowledge));
+  app.patch('/api/knowledge', asExpress(knowledge));
+  app.put('/api/knowledge', asExpress(knowledge));
 
   if (process.env.NODE_ENV === 'production') {
     const dist = path.join(process.cwd(), 'dist');
