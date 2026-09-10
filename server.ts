@@ -40,7 +40,10 @@ async function start() {
     app.get('*', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

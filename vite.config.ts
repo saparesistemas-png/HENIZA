@@ -10,6 +10,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, '.'),
     },
   },
+  server: {
+    // O preview usa o Express como servidor principal; desativar o cliente HMR
+    // evita conexões WebSocket órfãs no host de preview.
+    hmr: false,
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,
