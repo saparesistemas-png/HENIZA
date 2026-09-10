@@ -14,7 +14,6 @@ interface HenizaLogoProps {
  * - Slogan oficial
  */
 export const HenizaEmblem: React.FC<{ size?: number; className?: string }> = ({ size = 48, className = '' }) => {
-  // Unique filter IDs avoid collisions when multiple emblems render
   const uid = React.useId().replace(/:/g, '');
   return (
     <svg
@@ -168,8 +167,8 @@ export const HenizaCircularBadge: React.FC<{ size?: number; className?: string }
 
 /**
  * Wordmark legível: letras reais "HENIZA".
- * - Mobile: texto sólido (sem bg-clip-text, que quebra em vários Android)
- * - Desktop: leve gradiente, com E em verde neon
+ * Mobile: texto sólido (sem bg-clip-text / sem E em 3 barras).
+ * Desktop: E em verde neon, demais letras claras.
  */
 export const HenizaWordmark: React.FC<{ size?: 'sm' | 'md' | 'lg' | 'xl'; className?: string }> = ({
   size = 'md',
@@ -188,12 +187,14 @@ export const HenizaWordmark: React.FC<{ size?: 'sm' | 'md' | 'lg' | 'xl'; classN
       aria-label="HENIZA"
       title="HENIZA"
     >
-      {/* Mobile: solid readable letters */}
-      <span className="sm:hidden text-white">
-        HEN<span className="text-tech-destaque">I</span>ZA
+      {/* Mobile: 100% legível */}
+      <span className="sm:hidden">
+        <span className="text-white">H</span>
+        <span className="text-tech-destaque">E</span>
+        <span className="text-white">NIZA</span>
       </span>
 
-      {/* Desktop+: H N I Z A em titânio + E verde legível */}
+      {/* Desktop+ */}
       <span className="hidden sm:inline-flex items-baseline">
         <span className="text-slate-100">H</span>
         <span className="text-tech-destaque drop-shadow-[0_0_8px_rgba(0,255,102,0.55)]">E</span>
