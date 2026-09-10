@@ -352,7 +352,7 @@ export default function OficIA({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 animate-fadeIn max-w-5xl mx-auto px-1 sm:px-0">
+    <div className="space-y-4 sm:space-y-6 animate-fadeIn max-w-6xl mx-auto px-1 sm:px-0">
 
       {/* =========================================================================
           HERO & IDENTIDADE OFICIA
@@ -409,6 +409,17 @@ export default function OficIA({
       {/* =========================================================================
           1. TELA DE DESCRIÇÃO DO PROBLEMA (INPUT CONSOLE)
           ========================================================================= */}
+      <div className="flex items-center gap-3 px-1 sm:px-2" aria-label="Etapas do diagnóstico">
+        <div className="flex items-center gap-2 text-tech-destaque">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-tech-destaque text-xs font-black text-tech-fundo">1</span>
+          <span className="text-[10px] font-black uppercase tracking-wider sm:text-xs">Informar veículo e falha</span>
+        </div>
+        <span className="h-px flex-1 bg-tech-borda" />
+        <div className={`flex items-center gap-2 ${aiResponse ? 'text-tech-destaque' : 'text-tech-secundario'}`}>
+          <span className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-black ${aiResponse ? 'border-tech-destaque bg-tech-destaque text-tech-fundo' : 'border-tech-borda'}`}>2</span>
+          <span className="hidden text-[10px] font-black uppercase tracking-wider sm:inline sm:text-xs">Revisar laudo</span>
+        </div>
+      </div>
       <section id="tela-descricao" className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-5">
         
         {/* Bloco de Identificação do Veículo (Placa, Chassi / VIN, Montadora e Modelo) */}
@@ -804,7 +815,7 @@ export default function OficIA({
           2. TELA DE RETORNO DO DIAGNÓSTICO (LAUDO TÉCNICO OFICIAL HENIZA TECH)
           ========================================================================= */}
       {aiResponse && (
-        <section id="tela-retorno" className="bg-tech-cartao text-tech-texto rounded-2xl border-2 border-tech-destaque/40 shadow-2xl p-6 relative overflow-hidden animate-slideUp space-y-5">
+        <section id="tela-retorno" className="bg-tech-cartao text-tech-texto rounded-2xl border-2 border-tech-destaque/40 shadow-2xl p-4 sm:p-6 relative overflow-hidden animate-slideUp space-y-5">
           <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-tech-destaque via-cyan-400 to-tech-sucesso" />
           
           {/* Cabeçalho do Laudo */}
@@ -886,6 +897,7 @@ export default function OficIA({
             </div>
           </div>
 
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.35fr_0.65fr] lg:items-start">
           {/* Explicação Técnica dos Manuais */}
           <div className="bg-tech-fundo/70 p-4 rounded-xl border border-tech-borda space-y-1.5">
             <h4 className="text-[10px] font-black text-tech-secundario uppercase tracking-wider flex items-center gap-1.5">
@@ -981,6 +993,7 @@ export default function OficIA({
                 R$ {aiResponse.budgetItems?.reduce((acc: number, curr: any) => acc + curr.estimatedCost, 0)?.toFixed(2)}
               </span>
             </div>
+          </div>
           </div>
 
           {/* Barra de Ações: WhatsApp, Imprimir, Copiar, Novo Diagnóstico */}
