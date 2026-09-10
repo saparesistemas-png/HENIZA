@@ -353,6 +353,11 @@ export const BRAZIL_AUTOMAKERS: AutomakerData[] = [
     evSupported: true,
     fleetFavorite: true,
     models: [
+      { name: "Ka 1.0 / 1.5 SE (Hatch e Sedan)", category: "FLEX", isFleetPopular: true, systemType: "1.0 Ti-VCT 3 Cilindros / 1.5 Sigma", diagnosticProtocol: "OBD2 / CAN", sgwLocked: false },
+      { name: "Fiesta 1.0 / 1.6 Rocam e Sigma", category: "FLEX", isFleetPopular: true, systemType: "1.0 Zetec Rocam / 1.6 Sigma Flex", diagnosticProtocol: "OBD2 / CAN", sgwLocked: false },
+      { name: "EcoSport 1.6 / 2.0 Freestyle", category: "FLEX", isFleetPopular: true, systemType: "1.6 Sigma / 2.0 Duratec Flex", diagnosticProtocol: "OBD2 / CAN", sgwLocked: false },
+      { name: "Focus 1.6 / 2.0 Hatch e Sedan", category: "FLEX", isFleetPopular: true, systemType: "1.6 Sigma / 2.0 Duratec Direct Flex", diagnosticProtocol: "OBD2 / CAN", sgwLocked: false },
+      { name: "Fusion 2.5 / 2.0 EcoBoost", category: "FLEX", isFleetPopular: false, systemType: "2.5 Duratec / 2.0 EcoBoost", diagnosticProtocol: "CAN UDS", sgwLocked: false },
       { name: "Ranger 2.0 Turbo / 3.0 V6 Diesel", category: "DIESEL", isFleetPopular: true, systemType: "2.0 Turbo Diesel / 3.0 V6 250cv", diagnosticProtocol: "CAN-FD UDS", sgwLocked: true },
       { name: "Maverick Híbrida 2.5 Hybrid", category: "HYBRID", isFleetPopular: true, systemType: "2.5 Ciclo Atkinson + Motor Elétrico 194cv", voltage: "280V DC", diagnosticProtocol: "CAN-FD UDS", sgwLocked: true },
       { name: "Territory 1.5 Turbo EcoBoost", category: "FLEX", isFleetPopular: true, systemType: "1.5 EcoBoost 169cv", diagnosticProtocol: "CAN UDS", sgwLocked: false },
