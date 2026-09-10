@@ -577,25 +577,20 @@ export default function App() {
       </section>
 
       {/* OFFICIAL HENIZA FOOTER */}
-      <footer className="bg-tech-cartao text-tech-secundario text-[11px] py-6 border-t border-tech-borda print:hidden mt-12">
+      <footer className="bg-tech-fundo text-tech-secundario text-[11px] py-5 border-t border-tech-borda print:hidden mt-10">
         <div className="max-w-6xl mx-auto px-3 sm:px-4 md:px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <HenizaEmblem size={28} />
-            <div>
-              <div className="flex items-center gap-1.5">
-                <HenizaWordmark size="sm" />
-                <span className="text-[9px] font-bold text-tech-destaque bg-tech-destaque/10 px-1.5 py-0.5 rounded border border-tech-destaque/30">
-                  TECH
-                </span>
-                <span className="text-[9px] text-slate-400 font-mono">
-                  • Holding HENIZA
-                </span>
-              </div>
-              <p className="text-[9px] text-slate-400 font-mono tracking-wider uppercase mt-0.5">
-                TECNOLOGIA QUE CONECTA. SOLUÇÕES QUE TRANSFORMAM.
-              </p>
+        <div className="flex items-center gap-3">
+          <HenizaEmblem size={24} />
+          <div>
+            <div className="flex items-center gap-2">
+              <HenizaWordmark size="sm" />
+              <span className="text-[9px] font-bold tracking-wider text-tech-destaque">TECH</span>
             </div>
+            <p className="text-[9px] text-slate-500 font-mono mt-0.5">
+              Diagnóstico automotivo inteligente
+            </p>
           </div>
+        </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-4 text-center md:text-right">
             <span className="font-mono text-xs">

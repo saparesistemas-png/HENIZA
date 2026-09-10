@@ -357,7 +357,7 @@ export default function OficIA({
       {/* =========================================================================
           HERO & IDENTIDADE OFICIA
           ========================================================================= */}
-      <div className="bg-tech-cartao border-2 border-tech-destaque/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+      <div className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-6 shadow-lg relative overflow-hidden">
         {/* Glow & Circuit Background Accents */}
         <div className="absolute top-0 right-0 w-64 h-32 bg-tech-destaque/10 blur-3xl pointer-events-none -z-0" />
         <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-tech-destaque via-cyan-400 to-tech-destaque" />
@@ -804,7 +804,7 @@ export default function OficIA({
           2. TELA DE RETORNO DO DIAGNÓSTICO (LAUDO TÉCNICO OFICIAL HENIZA TECH)
           ========================================================================= */}
       {aiResponse && (
-        <section id="tela-retorno" className="bg-tech-cartao text-tech-texto rounded-2xl border-2 border-tech-destaque/40 shadow-2xl p-6 relative overflow-hidden animate-slideUp space-y-5">
+        <section id="tela-retorno" className="bg-tech-cartao text-tech-texto rounded-2xl border border-tech-borda shadow-lg p-6 relative overflow-hidden animate-slideUp space-y-5">
           <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-tech-destaque via-cyan-400 to-tech-sucesso" />
           
           {/* Cabeçalho do Laudo */}

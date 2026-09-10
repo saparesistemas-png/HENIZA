@@ -187,22 +187,7 @@ export const HenizaWordmark: React.FC<{ size?: 'sm' | 'md' | 'lg' | 'xl'; classN
       aria-label="HENIZA"
       title="HENIZA"
     >
-      {/* Mobile: 100% legível */}
-      <span className="sm:hidden">
-        <span className="text-white">H</span>
-        <span className="text-tech-destaque">E</span>
-        <span className="text-white">NIZA</span>
-      </span>
-
-      {/* Desktop+ */}
-      <span className="hidden sm:inline-flex items-baseline">
-        <span className="text-slate-100">H</span>
-        <span className="text-tech-destaque drop-shadow-[0_0_8px_rgba(0,255,102,0.55)]">E</span>
-        <span className="text-slate-100">N</span>
-        <span className="text-slate-100">I</span>
-        <span className="text-slate-100">Z</span>
-        <span className="text-slate-100">A</span>
-      </span>
+      <span className="text-slate-100">HENIZA</span>
     </span>
   );
 };
