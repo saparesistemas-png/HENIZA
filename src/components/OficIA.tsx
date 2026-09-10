@@ -357,15 +357,14 @@ export default function OficIA({
       {/* =========================================================================
           HERO & IDENTIDADE OFICIA
           ========================================================================= */}
-      <div className="bg-tech-cartao border-2 border-tech-destaque/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+      <div className="bg-tech-cartao border border-tech-borda rounded-xl p-4 sm:p-5 shadow-lg relative overflow-hidden">
         {/* Glow & Circuit Background Accents */}
-        <div className="absolute top-0 right-0 w-64 h-32 bg-tech-destaque/10 blur-3xl pointer-events-none -z-0" />
-        <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-tech-destaque via-cyan-400 to-tech-destaque" />
+        <div className="absolute top-0 inset-x-0 h-0.5 bg-tech-destaque/70" />
 
-        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-5">
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
           {/* OficIA System Identity */}
           <div className="flex items-center gap-3.5 sm:gap-4">
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-tech-fundo border-2 border-tech-destaque/50 flex items-center justify-center text-tech-destaque shadow-[0_0_20px_rgba(0,255,102,0.25)] shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-tech-fundo border border-tech-destaque/40 flex items-center justify-center text-tech-destaque shrink-0">
               <Wrench className="w-6 h-6 sm:w-7 sm:h-7" />
             </div>
 
@@ -391,7 +390,7 @@ export default function OficIA({
           </div>
 
           {/* Quick Pillar Tags */}
-          <div className="flex flex-wrap md:flex-col items-start md:items-end gap-1.5 self-stretch md:self-auto pt-2 md:pt-0 border-t md:border-t-0 border-tech-borda">
+          <div className="flex flex-wrap md:flex-col items-start md:items-end gap-1 self-stretch md:self-auto pt-2 md:pt-0 border-t md:border-t-0 border-tech-borda">
             <span className="text-[10px] text-tech-sucesso font-mono font-bold flex items-center gap-1.5 bg-tech-sucesso/10 px-2.5 py-1 rounded-lg border border-tech-sucesso/30">
               <span className="w-2 h-2 rounded-full bg-tech-sucesso inline-block animate-pulse" />
               {serverInfo?.aiConnected ? 'Rede Neural & Manuais Ativos' : 'Base Técnica Automotiva Ativa'}
@@ -409,10 +408,10 @@ export default function OficIA({
       {/* =========================================================================
           1. TELA DE DESCRIÇÃO DO PROBLEMA (INPUT CONSOLE)
           ========================================================================= */}
-      <section id="tela-descricao" className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-5">
+      <section id="tela-descricao" className="bg-tech-cartao border border-tech-borda rounded-xl p-4 sm:p-5 shadow-lg space-y-5">
         
         {/* Bloco de Identificação do Veículo (Placa, Chassi / VIN, Montadora e Modelo) */}
-        <div className="space-y-3.5 sm:space-y-4 border-b border-tech-borda pb-4 sm:pb-5">
+        <div className="space-y-4 border-b border-tech-borda pb-5">
           
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-[11px] font-black text-tech-texto uppercase tracking-wide">
@@ -562,7 +561,7 @@ export default function OficIA({
           </div>
 
           {/* Decodificação em Tempo Real do Chassi & Badge de Propulsão */}
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-tech-fundo/70 p-2.5 rounded-xl border border-tech-borda text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pt-1 text-xs">
             <div className="flex items-center gap-2">
               <Hash className="w-3.5 h-3.5 text-tech-destaque shrink-0" />
               <span className="text-[11px] font-medium text-tech-texto">
@@ -678,8 +677,12 @@ export default function OficIA({
         </div>
 
         {/* Atalhos Rápidos de Sintomas e Códigos */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
+        <details className="group border-b border-tech-borda pb-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[10px] font-black text-tech-secundario uppercase tracking-wider">
+            <span className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-tech-destaque" />Atalhos rápidos</span>
+            <span className="text-[9px] font-mono text-tech-secundario normal-case tracking-normal group-open:text-tech-destaque">abrir exemplos</span>
+          </summary>
+          <div className="flex items-center justify-between pt-3">
             <label className="text-[10px] font-black text-tech-secundario uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-tech-destaque" />
               <span>Atalhos Rápidos de Consulta</span>
@@ -720,7 +723,7 @@ export default function OficIA({
               </button>
             ))}
           </div>
-        </div>
+        </details>
 
         {/* Caixa de Texto de Descrição & Captura Multimodal */}
         <div className="space-y-4 pt-1">
@@ -734,7 +737,7 @@ export default function OficIA({
               </span>
             </div>
 
-            <div className="relative rounded-2xl border-2 border-tech-borda bg-tech-fundo p-3.5 focus-within:border-tech-destaque transition-all shadow-inner">
+            <div className="relative rounded-xl border border-tech-borda bg-tech-fundo p-3.5 focus-within:border-tech-destaque transition-colors shadow-inner">
               <textarea 
                 value={symptomQuery}
                 onChange={(e) => setSymptomQuery(e.target.value)}
@@ -779,7 +782,7 @@ export default function OficIA({
                 type="button"
                 onClick={handleRunDiagnosis}
                 disabled={aiLoading || (!symptomQuery && !attachedImage && !attachedVideo && !attachedAudio && !chassis)}
-                className="w-full sm:w-auto bg-gradient-to-r from-tech-destaque via-emerald-400 to-tech-destaque text-tech-fundo text-xs md:text-sm font-black py-3.5 px-8 rounded-xl hover:scale-102 active:scale-98 transition duration-200 disabled:opacity-40 disabled:pointer-events-none cursor-pointer shadow-xl shadow-tech-destaque/30 flex items-center justify-center gap-2.5 border border-white/20"
+                className="w-full sm:w-auto bg-tech-destaque text-tech-fundo text-xs md:text-sm font-black py-3.5 px-7 rounded-lg hover:bg-emerald-300 active:scale-[.99] transition duration-200 disabled:opacity-40 disabled:pointer-events-none cursor-pointer shadow-lg shadow-tech-destaque/20 flex items-center justify-center gap-2.5"
               >
                 {aiLoading ? (
                   <>
