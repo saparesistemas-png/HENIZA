@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, BookOpen, Handshake, ArrowRight, Lock, CheckCircle2, Smartphone, QrCode } from 'lucide-react';
+import { Wrench, BookOpen, Handshake, ArrowRight, Lock, CheckCircle2, Smartphone, QrCode, ShieldCheck, FileCheck2, Zap } from 'lucide-react';
 
 interface HenizaHomeProps {
   onNavigate: (view: 'diagnostico' | 'instrucoes' | 'parceiro') => void;
@@ -26,8 +26,30 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
               TM
             </span>
           </h1>
+          <div className="mt-4 sm:mt-5 max-w-2xl px-2">
+            <p className="text-sm sm:text-base md:text-lg text-slate-300 leading-relaxed">
+              Diagnóstico automotivo inteligente para oficinas que precisam de respostas técnicas mais rápidas e laudos mais confiáveis.
+            </p>
+            <p className="mt-2 text-[10px] sm:text-xs font-mono uppercase tracking-[0.18em] text-tech-secundario">
+              Da leitura do sintoma à decisão de reparo
+            </p>
+          </div>
         </div>
       </section>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3" aria-label="Benefícios do OficIA">
+        {[
+          { icon: ShieldCheck, label: 'Acesso protegido', tone: 'text-tech-destaque' },
+          { icon: FileCheck2, label: 'Laudo técnico', tone: 'text-cyan-300' },
+          { icon: Zap, label: 'Resposta mais rápida', tone: 'text-amber-300' },
+          { icon: Wrench, label: 'Feito para oficinas', tone: 'text-slate-200' },
+        ].map(({ icon: Icon, label, tone }) => (
+          <div key={label} className="flex items-center gap-2 rounded-xl border border-tech-borda bg-tech-cartao/70 px-3 py-2.5 sm:px-4 sm:py-3">
+            <Icon className={`w-4 h-4 shrink-0 ${tone}`} aria-hidden="true" />
+            <span className="text-[10px] sm:text-xs font-mono font-semibold text-slate-300 leading-tight">{label}</span>
+          </div>
+        ))}
+      </div>
 
       {/* =========================================================================
           OS 3 BOTÕES DIRECIONANDO (DIAGNÓSTICO, INSTRUÇÃO, SER PARCEIRO)
@@ -37,7 +59,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
         {/* BOTÃO 1: DIAGNÓSTICO (REQUER LOGIN) */}
         <button
           onClick={() => onNavigate('diagnostico')}
-          className="group relative bg-gradient-to-b from-tech-cartao to-[#08100B] border-2 border-tech-destaque/40 hover:border-tech-destaque rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(0,255,102,0.35)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
+          aria-label={isLoggedIn ? 'Iniciar diagnóstico automotivo' : 'Fazer login para iniciar diagnóstico automotivo'}
+          className="group relative bg-gradient-to-b from-tech-cartao to-[#08100B] border-2 border-tech-destaque/40 hover:border-tech-destaque focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tech-destaque focus-visible:ring-offset-2 focus-visible:ring-offset-tech-fundo rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(0,255,102,0.35)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-28 h-28 bg-tech-destaque/15 rounded-full blur-2xl pointer-events-none group-hover:bg-tech-destaque/25 transition duration-300" />
           <div className="absolute top-0 inset-x-0 h-1 bg-tech-destaque shadow-[0_0_10px_#00FF66]" />
@@ -80,7 +103,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
         {/* BOTÃO 2: INSTRUÇÕES (REQUER LOGIN) */}
         <button
           onClick={() => onNavigate('instrucoes')}
-          className="group relative bg-gradient-to-b from-tech-cartao to-[#090E14] border-2 border-slate-700/80 hover:border-cyan-400 rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(6,182,212,0.3)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
+          aria-label={isLoggedIn ? 'Ver instruções de uso' : 'Fazer login para acessar as instruções de uso'}
+          className="group relative bg-gradient-to-b from-tech-cartao to-[#090E14] border-2 border-slate-700/80 hover:border-cyan-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-tech-fundo rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(6,182,212,0.3)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-28 h-28 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-cyan-500/20 transition duration-300" />
           <div className="absolute top-0 inset-x-0 h-1 bg-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
@@ -123,7 +147,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
         {/* BOTÃO 3: SER PARCEIRO (ABERTO A TODOS) */}
         <button
           onClick={() => onNavigate('parceiro')}
-          className="group relative bg-gradient-to-b from-tech-cartao to-[#110F0A] border-2 border-slate-700/80 hover:border-amber-400 rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(245,158,11,0.3)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
+          aria-label="Quero ser parceiro da rede HENIZA"
+          className="group relative bg-gradient-to-b from-tech-cartao to-[#110F0A] border-2 border-slate-700/80 hover:border-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-tech-fundo rounded-2xl p-4 sm:p-5 md:p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(245,158,11,0.3)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-amber-500/20 transition duration-300" />
           <div className="absolute top-0 inset-x-0 h-1 bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
