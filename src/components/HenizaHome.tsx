@@ -27,8 +27,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
             </span>
           </h1>
           <div className="mt-4 sm:mt-5 max-w-2xl px-2">
-            <p className="text-sm sm:text-base md:text-lg text-slate-300 leading-relaxed">
-              Diagnóstico automotivo inteligente para oficinas que precisam de respostas técnicas mais rápidas e laudos mais confiáveis.
+            <p className="text-sm sm:text-base md:text-lg text-slate-100 leading-relaxed">
+              Diagnóstico automotivo inteligente para oficinas que precisam decidir o reparo com mais segurança e agilidade.
             </p>
             <p className="mt-2 text-[10px] sm:text-xs font-mono uppercase tracking-[0.18em] text-tech-secundario">
               Da leitura do sintoma à decisão de reparo
@@ -38,6 +38,15 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
       </section>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3" aria-label="Benefícios do OficIA">
+        <button
+          onClick={() => onNavigate('diagnostico')}
+          aria-label={isLoggedIn ? 'Começar diagnóstico agora' : 'Entrar para começar diagnóstico'}
+          className="col-span-2 md:hidden inline-flex items-center justify-center gap-2 rounded-xl bg-tech-destaque px-4 py-3 text-sm font-black text-tech-fundo shadow-[0_0_22px_rgba(0,255,102,0.28)] transition hover:bg-[#33ff85] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        >
+          <Wrench className="h-4 w-4" aria-hidden="true" />
+          {isLoggedIn ? 'Começar diagnóstico' : 'Entrar e diagnosticar'}
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </button>
         {[
           { icon: ShieldCheck, label: 'Acesso protegido', tone: 'text-tech-destaque' },
           { icon: FileCheck2, label: 'Laudo técnico', tone: 'text-cyan-300' },
@@ -89,8 +98,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
               Diagnóstico Automotivo
             </h3>
 
-            <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
-              Preencha os dados do veículo, relate os sintomas e emita o laudo técnico com Inteligência Artificial e protocolos para carros a combustão e elétricos (EV/DoIP).
+            <p className="text-xs text-slate-200 mt-2.5 leading-relaxed">
+              Registre o veículo e os sintomas para receber uma análise técnica orientada e um laudo pronto para a decisão de reparo.
             </p>
           </div>
 
@@ -133,8 +142,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
               Instruções de Uso
             </h3>
 
-            <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
-              Guia prático e intuitivo de utilização: como consultar por chassi ou placa, gravação acústica de ruídos do motor, códigos de falha e impressão do laudo.
+            <p className="text-xs text-slate-200 mt-2.5 leading-relaxed">
+              Aprenda a consultar veículos, registrar sintomas e usar os recursos do OficIA no dia a dia da oficina.
             </p>
           </div>
 
@@ -171,8 +180,8 @@ export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInsta
               Seja um Parceiro
             </h3>
 
-            <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
-              Credencie sua oficina mecânica, funilaria ou frota de locadora à rede oficial. Tenha laudos homologados, suporte técnico e vantagens exclusivas.
+            <p className="text-xs text-slate-200 mt-2.5 leading-relaxed">
+              Conecte sua oficina à rede HENIZA e tenha suporte técnico, laudos homologados e novas oportunidades.
             </p>
           </div>
 
