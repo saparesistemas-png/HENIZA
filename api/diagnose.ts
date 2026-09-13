@@ -1,20 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
 
-export const config = {
-  maxDuration: 60,
-};
+export const config = { maxDuration: 60 };
 
 const REQUEST_TIMEOUT_MS = 50_000;
-const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
 
 type Payload = {
   description?: string;
-  mode?: string;
   image?: string;
   audio?: string;
   video?: string;
-  lang?: string;
   plate?: string;
   chassis?: string;
   make?: string;
@@ -27,15 +21,16 @@ type Payload = {
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('TIMEOUT')), ms);
-    promise
-      .then((v) => {
+    promise.then(
+      (v) => {
         clearTimeout(timer);
         resolve(v);
-      })
-      .catch((err) => {
+      },
+      (err) => {
         clearTimeout(timer);
         reject(err);
-      });
+      }
+    );
   });
 }
 
@@ -54,7 +49,7 @@ function extractJson(text: string): Record<string, unknown> | null {
 }
 
 function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false; message: string } {
-  if (!body || typeof body !== 'object') return { ok: false, message: 'Body inválido.' };
+  if (!body || typeof body !== 'object') return { ok: false, message: 'Body invalido.' };
   const b = body as Record<string, unknown>;
   const description = b.description ? String(b.description).trim() : '';
   const image = typeof b.image === 'string' ? b.image : undefined;
@@ -62,7 +57,7 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
   const video = typeof b.video === 'string' ? b.video : undefined;
   const chassis = b.chassis ? String(b.chassis).trim() : '';
   if (!(description || image || audio || video || chassis)) {
-    return { ok: false, message: 'Informe descrição, imagem, áudio, vídeo ou chassi.' };
+    return { ok: false, message: 'Informe descricao, imagem, audio, video ou chassi.' };
   }
   return {
     ok: true,
@@ -75,8 +70,6 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
       plate: b.plate ? String(b.plate).trim() : '',
       make: b.make ? String(b.make).trim() : '',
       model: b.model ? String(b.model).trim() : '',
-      mode: b.mode ? String(b.mode) : 'Multimodal',
-      lang: b.lang ? String(b.lang) : 'pt',
       propulsionType: b.propulsionType ? String(b.propulsionType) : '',
       isEvAlternative: Boolean(b.isEvAlternative),
       clientId: b.clientId ? String(b.clientId) : undefined,
@@ -85,76 +78,51 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
 }
 
 function buildPrompt(p: Payload): string {
-  return `Você é o consultor técnico da oficina OficIA.
-Escreva para o MECÂNICO na bancada: português do Brasil, frases curtas, concretas.
-
-VEÍCULO:
-- Placa: ${p.plate || 'N/I'}
-- Chassi: ${p.chassis || 'N/I'}
-- Marca: ${p.make || 'Geral'}
-- Modelo: ${p.model || 'Geral'}
-- Propulsão: ${p.propulsionType || (p.isEvAlternative ? 'Elétrico/Híbrido' : 'Flex')}
-- Relato: "${p.description || 'Análise multimodal'}"
-
-O QUE ENTREGAR:
-- problemName: diagnóstico em 1 linha
-- diagnosticNotes: causas e o que medir (3 a 6 linhas)
-- resetProcedure: passos numerados
-- correctiveChecklist: ações com verbo no início
-- budgetItems: valores em R$
-- originBadge: curto
-- originExplanation: 1 frase
-- NÃO use: Rede Neural, Base Mundial, AutoOps
-
-JSON OBRIGATÓRIO:
-{
-  "codeType": "SCANNER_OBD2",
-  "codeTypeLabel": "string",
-  "originBadge": "string",
-  "originExplanation": "string",
-  "problemName": "string",
-  "supplierCategory": "string",
-  "severity": "Alta|Média|Baixa",
-  "source": "OficIA",
-  "diagnosticNotes": "string",
-  "resetProcedure": "string",
-  "correctiveChecklist": ["string"],
-  "preventiveChecklist": ["string"],
-  "budgetItems": [{"item":"string","category":"Peça|Mão de Obra","estimatedCost":0}],
-  "suggestedBestPractices": ["string"]
-}`;
+  return [
+    'Voce e o consultor tecnico da oficina OficIA.',
+    'Escreva para o MECANICO: portugues claro, frases curtas e concretas.',
+    '',
+    'VEICULO:',
+    '- Placa: ' + (p.plate || 'N/I'),
+    '- Chassi: ' + (p.chassis || 'N/I'),
+    '- Marca: ' + (p.make || 'Geral'),
+    '- Modelo: ' + (p.model || 'Geral'),
+    '- Relato: "' + (p.description || '') + '"',
+    '',
+    'Retorne SOMENTE JSON com:',
+    'problemName, severity (Alta|Media|Baixa), originBadge curto,',
+    'diagnosticNotes, resetProcedure, correctiveChecklist[],',
+    'preventiveChecklist[], budgetItems[{item,category,estimatedCost}],',
+    'codeType, codeTypeLabel, originExplanation, supplierCategory, source.',
+    'Nao use termos: Rede Neural, Base Mundial, AutoOps.',
+  ].join('\n');
 }
 
 function localFallback(p: Payload): Record<string, unknown> {
-  const q = (p.description || '').toLowerCase();
-  const isEv =
-    p.isEvAlternative ||
-    /byd|dolphin|gwm|ora|el[eé]tric|bateria|isolamento|doip|hvil/.test(
-      `${q} ${p.make || ''} ${p.model || ''}`
-    );
+  const q = ((p.description || '') + ' ' + (p.make || '') + ' ' + (p.model || '')).toLowerCase();
 
-  if (isEv) {
+  if (/byd|dolphin|gwm|ora|eletr|bateria|isolamento|doip|hvil/.test(q) || p.isEvAlternative) {
     return {
       codeType: 'DIAGNOSTICO_EV_ALTA_TENSAO',
-      codeTypeLabel: 'Diagnóstico EV',
-      originBadge: 'EV / Alta tensão',
-      originExplanation: 'Protocolo para veículo elétrico ou híbrido.',
-      problemName: `${p.make || 'EV'} ${p.model || ''} — verificar alta tensão / BMS`.trim(),
-      supplierCategory: 'BMS / Alta tensão',
+      codeTypeLabel: 'Diagnostico EV',
+      originBadge: 'EV / Alta tensao',
+      originExplanation: 'Protocolo para veiculo eletrico ou hibrido.',
+      problemName: ((p.make || 'EV') + ' ' + (p.model || '') + ' - verificar alta tensao / BMS').trim(),
+      supplierCategory: 'BMS / Alta tensao',
       severity: 'Alta',
       source: 'OficIA (local)',
       diagnosticNotes:
-        '1. Conferir avisos na multimídia e isolamento.\n2. Medir isolamento HV (> 500 kΩ @ 500V).\n3. Checar bateria 12V e loop HVIL.',
+        '1. Conferir avisos na multimídia.\n2. Medir isolamento HV (> 500 kOhm).\n3. Checar bateria 12V e HVIL.',
       resetProcedure:
         '1. Negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
       correctiveChecklist: [
         'Medir isolamento HV',
-        'Verificar desbalanceamento de células',
+        'Verificar desbalanceamento de celulas',
         'Testar HVIL',
         'Validar bateria 12V',
       ],
       preventiveChecklist: ['Carga AC completa semanal', 'Inspecionar cabos HV'],
-      budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
+      budgetItems: [{ item: 'Diagnostico EV', category: 'Mao de Obra', estimatedCost: 450 }],
       suggestedBestPractices: ['Usar luva isolante 1000V (NR-10).'],
     };
   }
@@ -163,118 +131,119 @@ function localFallback(p: Payload): Record<string, unknown> {
     return {
       codeType: 'SCANNER_OBD2',
       codeTypeLabel: 'Scanner OBD2',
-      originBadge: 'P0300 — misfire',
-      originExplanation: 'Falha de combustão aleatória ou em vários cilindros.',
-      problemName: 'P0300 — falha de combustão (misfire) em vários cilindros',
-      supplierCategory: 'Ignição / Injeção / Mecânica',
+      originBadge: 'P0300 - misfire',
+      originExplanation: 'Falha de combustao em varios cilindros.',
+      problemName: 'P0300 - falha de combustao (misfire) em varios cilindros',
+      supplierCategory: 'Ignicao / Injecao / Mecanica',
       severity: 'Alta',
       source: 'OficIA (local)',
       diagnosticNotes:
-        'P0300 indica combustão irregular em mais de um cilindro. Causas comuns: bobinas, velas, cabos, bicos, baixa pressão de combustível, admissão com ar falso, compressão baixa. Em marcha lenta com vibração, priorize velas/bobinas e pressão de combustível.',
+        'P0300 indica combustao irregular em mais de um cilindro. Causas comuns: bobinas, velas, cabos, bicos, baixa pressao de combustivel, admissao com ar falso, compressao baixa. Em marcha lenta com vibracao, priorize velas/bobinas e pressao de combustivel.',
       resetProcedure:
-        '1. Ler códigos e congelamento de quadro.\n2. Testar bobinas e velas (resistência e faísca).\n3. Medir pressão de combustível e procurar vazamento de vácuo.\n4. Corrigir a causa, apagar códigos e fazer teste de rodagem.',
+        '1. Ler codigos e congelamento de quadro.\n2. Testar bobinas e velas.\n3. Medir pressao de combustivel e vazamento de vacuo.\n4. Corrigir a causa, apagar codigos e fazer teste de rodagem.',
       correctiveChecklist: [
-        'Confirmar P0300 e cilindros relacionados (P0301–P0304)',
+        'Confirmar P0300 e cilindros relacionados (P0301-P0304)',
         'Inspecionar e medir velas e bobinas',
-        'Medir pressão da bomba de combustível',
-        'Procurar entrada de ar falso (admissão/mangueiras)',
-        'Testar compressão se elétrico/combustível estiver ok',
+        'Medir pressao da bomba de combustivel',
+        'Procurar entrada de ar falso (admissao/mangueiras)',
+        'Testar compressao se eletrico/combustivel estiver ok',
       ],
       preventiveChecklist: [
         'Trocar velas no intervalo da montadora',
-        'Usar combustível de qualidade',
+        'Usar combustivel de qualidade',
       ],
       budgetItems: [
-        { item: 'Diagnóstico eletrônico + teste de bobinas/velas', category: 'Mão de Obra', estimatedCost: 220 },
-        { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
-        { item: 'Bobina de ignição (se necessária, unitária)', category: 'Peça', estimatedCost: 250 },
+        { item: 'Diagnostico eletronico + teste de bobinas/velas', category: 'Mao de Obra', estimatedCost: 220 },
+        { item: 'Jogo de velas (estimativa)', category: 'Peca', estimatedCost: 180 },
+        { item: 'Bobina de ignicao (se necessaria)', category: 'Peca', estimatedCost: 250 },
       ],
-      suggestedBestPractices: [
-        'Não apague o código antes de registrar os dados do scanner.',
-      ],
+      suggestedBestPractices: ['Nao apague o codigo antes de registrar os dados do scanner.'],
     };
   }
 
   const codeMatch = q.match(/\b([pcbu]\d{4})\b/i);
   const problem = codeMatch
-    ? `${codeMatch[1].toUpperCase()} — código relatado no scanner`
-    : `${p.make || ''} ${p.model || ''} — ${(p.description || 'análise de falha').slice(0, 60)}`.trim();
+    ? codeMatch[1].toUpperCase() + ' - codigo relatado no scanner'
+    : ((p.make || '') + ' ' + (p.model || '') + ' - ' + (p.description || 'analise de falha').slice(0, 60)).trim();
 
   return {
     codeType: 'SCANNER_OBD2',
-    codeTypeLabel: 'Diagnóstico OBD2 / sintoma',
+    codeTypeLabel: 'Diagnostico OBD2 / sintoma',
     originBadge: 'Laudo de oficina',
-    originExplanation: 'Análise preliminar com base no relato.',
+    originExplanation: 'Analise preliminar com base no relato.',
     problemName: problem,
-    supplierCategory: 'Powertrain / Elétrica',
-    severity: 'Média',
+    supplierCategory: 'Powertrain / Eletrica',
+    severity: 'Media',
     source: 'OficIA (local)',
     diagnosticNotes:
-      '1. Confirmar o código no scanner.\n2. Verificar bateria e massas.\n3. Inspecionar chicotes e conectores do sistema indicado.',
+      '1. Confirmar o codigo no scanner.\n2. Verificar bateria e massas.\n3. Inspecionar chicotes e conectores do sistema indicado.',
     resetProcedure:
-      '1. Registrar e apagar códigos.\n2. Fazer teste de rodagem.\n3. Confirmar se o código retorna.',
+      '1. Registrar e apagar codigos.\n2. Fazer teste de rodagem.\n3. Confirmar se o codigo retorna.',
     correctiveChecklist: [
-      'Ler e gravar códigos OBD2',
-      'Medir tensão da bateria (parado e ligado)',
+      'Ler e gravar codigos OBD2',
+      'Medir tensao da bateria (parado e ligado)',
       'Inspecionar conectores e massas',
       'Testar componentes do sistema apontado',
     ],
-    preventiveChecklist: ['Revisões no prazo', 'Usar peças de qualidade'],
+    preventiveChecklist: ['Revisoes no prazo', 'Usar pecas de qualidade'],
     budgetItems: [
-      { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
-      { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
+      { item: 'Diagnostico eletronico', category: 'Mao de Obra', estimatedCost: 180 },
+      { item: 'Mao de obra de reparo', category: 'Mao de Obra', estimatedCost: 200 },
     ],
     suggestedBestPractices: ['Anotar placa, chassi e sintomas com foto.'],
   };
 }
 
 async function callGemini(payload: Payload, apiKey: string): Promise<Record<string, unknown> | null> {
-  const ai = new GoogleGenAI({ apiKey });
-  const parts: any[] = [{ text: buildPrompt(payload) }];
+  try {
+    const { GoogleGenAI } = await import('@google/genai');
+    const ai = new GoogleGenAI({ apiKey });
+    const parts: any[] = [{ text: buildPrompt(payload) }];
 
-  if (payload.image?.startsWith('data:image')) {
-    const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
-    if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
-  }
-  if (payload.audio?.startsWith('data:audio')) {
-    const m = payload.audio.match(/^data:(audio\/\w+);base64,(.+)$/);
-    if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
-  }
-
-  let lastError: unknown = null;
-
-  for (const model of MODELS) {
-    try {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: [{ role: 'user', parts }],
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.3,
-            systemInstruction:
-              'Técnico de oficina brasileiro. Responda somente JSON válido, texto curto e prático.',
-          },
-        }),
-        REQUEST_TIMEOUT_MS
-      );
-
-      const text =
-        (response as any).text ||
-        (response as any).candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ||
-        '';
-
-      if (text) {
-        const parsed = extractJson(text);
-        if (parsed) return { ...parsed, _model: model };
-      }
-    } catch (err) {
-      lastError = err;
-      console.error('[diagnose] model fail', model, (err as any)?.message || err);
+    if (payload.image && payload.image.indexOf('data:image') === 0) {
+      const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
     }
-  }
+    if (payload.audio && payload.audio.indexOf('data:audio') === 0) {
+      const m = payload.audio.match(/^data:(audio\/\w+);base64,(.+)$/);
+      if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+    }
 
-  if (lastError) console.error('[diagnose] gemini all models failed', lastError);
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+    for (const model of models) {
+      try {
+        const response: any = await withTimeout(
+          ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts }],
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.3,
+            },
+          }),
+          REQUEST_TIMEOUT_MS
+        );
+        const text =
+          response.text ||
+          (response.candidates &&
+            response.candidates[0] &&
+            response.candidates[0].content &&
+            response.candidates[0].content.parts &&
+            response.candidates[0].content.parts.map(function (p: any) {
+              return p.text || '';
+            }).join('')) ||
+          '';
+        if (text) {
+          const parsed = extractJson(text);
+          if (parsed) return Object.assign({}, parsed, { _model: model });
+        }
+      } catch (err: any) {
+        console.error('[diagnose] model fail', model, err && err.message ? err.message : err);
+      }
+    }
+  } catch (err: any) {
+    console.error('[diagnose] gemini import/call', err && err.message ? err.message : err);
+  }
   return null;
 }
 
@@ -302,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         delete parsed._model;
         return res.status(200).json({
           ok: true,
-          data: { ...parsed, source: 'OficIA / Gemini' },
+          data: Object.assign({}, parsed, { source: 'OficIA / Gemini' }),
           meta: {
             source: 'gemini',
             model: modelUsed,
@@ -324,6 +293,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   } catch (err) {
     console.error('[diagnose] fatal', err);
-    return res.status(500).json({ ok: false, error: 'Erro interno no diagnóstico.' });
+    return res.status(500).json({ ok: false, error: 'Erro interno no diagnostico.' });
   }
 }
