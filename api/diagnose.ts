@@ -5,7 +5,8 @@ export const config = {
   maxDuration: 60,
 };
 
-const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 50_000;
+const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
 
 type Payload = {
   description?: string;
@@ -85,7 +86,7 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
 
 function buildPrompt(p: Payload): string {
   return `Você é o consultor técnico da oficina OficIA.
-Escreva para o MECÂNICO: português claro, frases curtas, sem jargão de sistema.
+Escreva para o MECÂNICO na bancada: português do Brasil, frases curtas, concretas.
 
 VEÍCULO:
 - Placa: ${p.plate || 'N/I'}
@@ -95,16 +96,17 @@ VEÍCULO:
 - Propulsão: ${p.propulsionType || (p.isEvAlternative ? 'Elétrico/Híbrido' : 'Flex')}
 - Relato: "${p.description || 'Análise multimodal'}"
 
-REGRAS:
-1. problemName: uma linha objetiva.
-2. diagnosticNotes: 3 a 6 frases curtas.
-3. resetProcedure: passos 1. 2. 3.
-4. correctiveChecklist: até 6 ações com verbo no início.
-5. originBadge: máximo 40 caracteres.
-6. originExplanation: no máximo 1 frase.
-7. Não use "Rede Neural", "Base Mundial", "AutoOps".
+O QUE ENTREGAR:
+- problemName: diagnóstico em 1 linha (ex.: "P0300 — falha de combustão em vários cilindros")
+- diagnosticNotes: causas mais prováveis e o que medir (3 a 6 linhas)
+- resetProcedure: sequência de teste/reparo numerada
+- correctiveChecklist: ações práticas (verbo no início)
+- budgetItems: itens com valor estimado em R$
+- originBadge: curto (ex.: "Scanner OBD2")
+- originExplanation: 1 frase só
+- NÃO use: Rede Neural, Base Mundial, AutoOps, Holding
 
-RETORNE SOMENTE JSON:
+JSON OBRIGATÓRIO:
 {
   "codeType": "SCANNER_OBD2",
   "codeTypeLabel": "string",
@@ -142,9 +144,9 @@ function localFallback(p: Payload): Record<string, unknown> {
       severity: 'Alta',
       source: 'OficIA (local)',
       diagnosticNotes:
-        '1. Conferir avisos na multimídia.\n2. Medir isolamento HV (> 500 kΩ).\n3. Checar bateria 12V e HVIL.',
+        '1. Conferir avisos na multimídia e isolamento.\n2. Medir isolamento HV (> 500 kΩ @ 500V).\n3. Checar bateria 12V e loop HVIL.',
       resetProcedure:
-        '1. Desligar e tirar negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
+        '1. Negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
       correctiveChecklist: [
         'Medir isolamento HV',
         'Verificar desbalanceamento de células',
@@ -152,17 +154,57 @@ function localFallback(p: Payload): Record<string, unknown> {
         'Validar bateria 12V',
       ],
       preventiveChecklist: ['Carga AC completa semanal', 'Inspecionar cabos HV'],
-      budgetItems: [
-        { item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 },
-      ],
+      budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
       suggestedBestPractices: ['Usar luva isolante 1000V (NR-10).'],
+    };
+  }
+
+  // P0300 / misfire
+  if (/p0300|falha de combust|misfire|falhando|engasg|vibra/.test(q)) {
+    return {
+      codeType: 'SCANNER_OBD2',
+      codeTypeLabel: 'Scanner OBD2',
+      originBadge: 'P0300 — misfire',
+      originExplanation: 'Falha de combustão aleatória ou em vários cilindros.',
+      problemName: 'P0300 — falha de combustão (misfire) em vários cilindros',
+      supplierCategory: 'Ignição / Injeção / Mecânica',
+      severity: 'Alta',
+      source: 'OficIA (local)',
+      diagnosticNotes:
+        'P0300 indica combustão irregular em mais de um cilindro.\n'\ +
+        'Causas comuns: bobinas, velas, cabos, bicos, baixa pressão de combustível, admissão com ar falso, compressão baixa.\n'\ +
+        'Em marcha lenta com vibração, priorize velas/bobinas e pressão de combustível.',
+      resetProcedure:
+        '1. Ler códigos e congelamento de quadro.\n'\ +
+        '2. Testar bobinas e velas (resistência e faísca).\n'\ +
+        '3. Medir pressão de combustível e procurar vazamento de vácuo.\n'\ +
+        '4. Corrigir a causa, apagar códigos e fazer teste de rodagem.',
+      correctiveChecklist: [
+        'Confirmar P0300 e cilindros relacionados (P0301–P0304)',
+        'Inspecionar e medir velas e bobinas',
+        'Medir pressão da bomba de combustível',
+        'Procurar entrada de ar falso (admissão/mangueiras)',
+        'Testar compressão se elétrico/combustível estiver ok',
+      ],
+      preventiveChecklist: [
+        'Trocar velas no intervalo da montadora',
+        'Usar combustível de qualidade',
+      ],
+      budgetItems: [
+        { item: 'Diagnóstico eletrônico + teste de bobinas/velas', category: 'Mão de Obra', estimatedCost: 220 },
+        { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
+        { item: 'Bobina de ignição (se necessária, unitária)', category: 'Peça', estimatedCost: 250 },
+      ],
+      suggestedBestPractices: [
+        'Não apague o código antes de registrar os dados do scanner.',
+      ],
     };
   }
 
   const codeMatch = q.match(/\b([pcbu]\d{4})\b/i);
   const problem = codeMatch
-    ? `${codeMatch[1].toUpperCase()} — falha relatada no scanner`
-    : `${p.make || ''} ${p.model || ''} — ${ (p.description || 'análise de falha').slice(0, 60) }`.trim();
+    ? `${codeMatch[1].toUpperCase()} — código relatado no scanner`
+    : `${p.make || ''} ${p.model || ''} — ${(p.description || 'análise de falha').slice(0, 60)}`.trim();
 
   return {
     codeType: 'SCANNER_OBD2',
@@ -179,7 +221,7 @@ function localFallback(p: Payload): Record<string, unknown> {
       '1. Registrar e apagar códigos.\n2. Fazer teste de rodagem.\n3. Confirmar se o código retorna.',
     correctiveChecklist: [
       'Ler e gravar códigos OBD2',
-      'Medir tensão da bateria (motor ligado e parado)',
+      'Medir tensão da bateria (parado e ligado)',
       'Inspecionar conectores e massas',
       'Testar componentes do sistema apontado',
     ],
@@ -190,6 +232,56 @@ function localFallback(p: Payload): Record<string, unknown> {
     ],
     suggestedBestPractices: ['Anotar placa, chassi e sintomas com foto.'],
   };
+}
+
+async function callGemini(payload: Payload, apiKey: string): Promise<Record<string, unknown> | null> {
+  const ai = new GoogleGenAI({ apiKey });
+  const parts: any[] = [{ text: buildPrompt(payload) }];
+
+  if (payload.image?.startsWith('data:image')) {
+    const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+  }
+  if (payload.audio?.startsWith('data:audio')) {
+    const m = payload.audio.match(/^data:(audio\/\w+);base64,(.+)$/);
+    if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+  }
+
+  let lastError: unknown = null;
+
+  for (const model of MODELS) {
+    try {
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts }],
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.3,
+            systemInstruction:
+              'Técnico de oficina brasileiro. Responda somente JSON válido, texto curto e prático.',
+          },
+        }),
+        REQUEST_TIMEOUT_MS
+      );
+
+      const text =
+        (response as any).text ||
+        (response as any).candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ||
+        '';
+
+      if (text) {
+        const parsed = extractJson(text);
+        if (parsed) return { ...parsed, _model: model };
+      }
+    } catch (err) {
+      lastError = err;
+      console.error('[diagnose] model fail', model, (err as any)?.message || err);
+    }
+  }
+
+  if (lastError) console.error('[diagnose] gemini all models failed', lastError);
+  return null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -210,48 +302,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (apiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey });
-        const parts: any[] = [{ text: buildPrompt(payload) }];
-
-        if (payload.image?.startsWith('data:image')) {
-          const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
-          if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
-        }
-        if (payload.audio?.startsWith('data:audio')) {
-          const m = payload.audio.match(/^data:(audio\/\w+);base64,(.+)$/);
-          if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
-        }
-
-        const response = await withTimeout(
-          ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts },
-            config: {
-              responseMimeType: 'application/json',
-              systemInstruction:
-                'Técnico de oficina. Responda somente JSON. Texto curto e prático.',
-            },
-          }),
-          REQUEST_TIMEOUT_MS
-        );
-
-        if (response.text) {
-          const parsed = extractJson(response.text);
-          if (parsed) {
-            return res.status(200).json({
-              ok: true,
-              data: { ...parsed, source: 'OficIA / Gemini' },
-              meta: {
-                source: 'gemini',
-                latencyMs: Date.now() - startedAt,
-                clientId: payload.clientId,
-              },
-            });
-          }
-        }
-      } catch (err: any) {
-        console.error('[diagnose] gemini', err?.message || err);
+      const parsed = await callGemini(payload, apiKey);
+      if (parsed) {
+        const modelUsed = parsed._model;
+        delete parsed._model;
+        return res.status(200).json({
+          ok: true,
+          data: { ...parsed, source: 'OficIA / Gemini' },
+          meta: {
+            source: 'gemini',
+            model: modelUsed,
+            latencyMs: Date.now() - startedAt,
+            clientId: payload.clientId,
+          },
+        });
       }
     }
 
