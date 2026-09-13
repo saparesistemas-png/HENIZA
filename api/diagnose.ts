@@ -97,14 +97,14 @@ VEÍCULO:
 - Relato: "${p.description || 'Análise multimodal'}"
 
 O QUE ENTREGAR:
-- problemName: diagnóstico em 1 linha (ex.: "P0300 — falha de combustão em vários cilindros")
-- diagnosticNotes: causas mais prováveis e o que medir (3 a 6 linhas)
-- resetProcedure: sequência de teste/reparo numerada
-- correctiveChecklist: ações práticas (verbo no início)
-- budgetItems: itens com valor estimado em R$
-- originBadge: curto (ex.: "Scanner OBD2")
-- originExplanation: 1 frase só
-- NÃO use: Rede Neural, Base Mundial, AutoOps, Holding
+- problemName: diagnóstico em 1 linha
+- diagnosticNotes: causas e o que medir (3 a 6 linhas)
+- resetProcedure: passos numerados
+- correctiveChecklist: ações com verbo no início
+- budgetItems: valores em R$
+- originBadge: curto
+- originExplanation: 1 frase
+- NÃO use: Rede Neural, Base Mundial, AutoOps
 
 JSON OBRIGATÓRIO:
 {
@@ -159,7 +159,6 @@ function localFallback(p: Payload): Record<string, unknown> {
     };
   }
 
-  // P0300 / misfire
   if (/p0300|falha de combust|misfire|falhando|engasg|vibra/.test(q)) {
     return {
       codeType: 'SCANNER_OBD2',
@@ -171,14 +170,9 @@ function localFallback(p: Payload): Record<string, unknown> {
       severity: 'Alta',
       source: 'OficIA (local)',
       diagnosticNotes:
-        'P0300 indica combustão irregular em mais de um cilindro.\n'\ +
-        'Causas comuns: bobinas, velas, cabos, bicos, baixa pressão de combustível, admissão com ar falso, compressão baixa.\n'\ +
-        'Em marcha lenta com vibração, priorize velas/bobinas e pressão de combustível.',
+        'P0300 indica combustão irregular em mais de um cilindro. Causas comuns: bobinas, velas, cabos, bicos, baixa pressão de combustível, admissão com ar falso, compressão baixa. Em marcha lenta com vibração, priorize velas/bobinas e pressão de combustível.',
       resetProcedure:
-        '1. Ler códigos e congelamento de quadro.\n'\ +
-        '2. Testar bobinas e velas (resistência e faísca).\n'\ +
-        '3. Medir pressão de combustível e procurar vazamento de vácuo.\n'\ +
-        '4. Corrigir a causa, apagar códigos e fazer teste de rodagem.',
+        '1. Ler códigos e congelamento de quadro.\n2. Testar bobinas e velas (resistência e faísca).\n3. Medir pressão de combustível e procurar vazamento de vácuo.\n4. Corrigir a causa, apagar códigos e fazer teste de rodagem.',
       correctiveChecklist: [
         'Confirmar P0300 e cilindros relacionados (P0301–P0304)',
         'Inspecionar e medir velas e bobinas',
