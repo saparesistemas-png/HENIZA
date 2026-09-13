@@ -9,12 +9,12 @@ interface HenizaHomeProps {
 
 export default function HenizaHome({ onNavigate, isLoggedIn = false, onOpenInstallModal }: HenizaHomeProps) {
   return (
-    <div className="max-w-5xl mx-auto py-3 sm:py-6 md:py-8 px-2 sm:px-4 animate-fadeIn space-y-6 sm:space-y-8">
+    <div className="max-w-5xl mx-auto py-2 sm:py-6 md:py-8 px-2 sm:px-4 animate-fadeIn space-y-4 sm:space-y-8">
       
       {/* =========================================================================
           ABERTURA MARCANTE E VISUALMENTE LIMPA — OFICIA EM MÁXIMA EVIDÊNCIA
           ========================================================================= */}
-      <section className="text-center relative flex flex-col items-center justify-center pt-3 sm:pt-6 pb-2">
+      <section className="text-center relative flex flex-col items-center justify-center pt-1 sm:pt-6 pb-1 sm:pb-2">
         {/* Glow de fundo */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 sm:w-96 h-72 sm:h-96 bg-tech-destaque/12 rounded-full blur-3xl pointer-events-none -z-10" />
 

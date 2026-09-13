@@ -307,7 +307,7 @@ export default function App() {
             {/* Botão de Instalação Mobile (PWA) */}
             <button
               onClick={() => setIsInstallModalOpen(true)}
-              className="text-[10px] font-mono font-bold text-slate-300 hover:text-tech-destaque bg-tech-fundo hover:bg-tech-cartao px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg border border-tech-borda hover:border-tech-destaque/40 transition flex items-center gap-1 cursor-pointer shadow-sm shrink-0"
+              className="hidden sm:flex text-[10px] font-mono font-bold text-slate-300 hover:text-tech-destaque bg-tech-fundo hover:bg-tech-cartao px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg border border-tech-borda hover:border-tech-destaque/40 transition items-center gap-1 cursor-pointer shadow-sm shrink-0"
               title="Instalar no Smartphone da Oficina (QR Code & Guia)"
             >
               <Smartphone className="w-3.5 h-3.5 text-tech-destaque shrink-0" />
@@ -330,7 +330,7 @@ export default function App() {
             </button>
 
             {/* Idiomas */}
-            <div className="flex items-center gap-0.5 sm:gap-1 text-[9px] sm:text-[10px] text-tech-secundario font-bold bg-tech-fundo p-0.5 sm:p-1 rounded-lg border border-tech-borda shrink-0">
+            <div className="hidden sm:flex items-center gap-0.5 sm:gap-1 text-[9px] sm:text-[10px] text-tech-secundario font-bold bg-tech-fundo p-0.5 sm:p-1 rounded-lg border border-tech-borda shrink-0">
               <Languages className="w-3 h-3 text-tech-destaque mr-0.5 hidden md:inline" />
               {(['pt', 'en', 'es'] as const).map(l => (
                 <button
