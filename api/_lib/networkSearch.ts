@@ -5,7 +5,7 @@
  * 3) Gemini grounding (opcional)
  */
 
-import { gatherPublicTechnicalData } from './publicTechnicalApis';
+import { gatherPublicTechnicalData } from './publicTechnicalApis.js';
 
 export type NetworkHit = {
   title: string;
@@ -263,8 +263,6 @@ export function mergeNetworkIntoDiagnosis(
   }
   if (network.laborTimes?.length) {
     out.laborTimes = network.laborTimes;
-
-    // Enriquece orçamento se a IA não trouxe itens detalhados
     const existing = (diagnosis.budgetItems as any[]) || [];
     if (existing.length <= 2) {
       const laborItems = network.laborTimes.slice(0, 3).map((l) => ({
