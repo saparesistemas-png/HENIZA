@@ -1,8 +1,8 @@
 /**
  * Busca técnica na rede pública para o OficIA.
- * 1) APIs grátis: NHTSA (recalls/complaints/VIN) + DTC local (+ OLP se chave)
- * 2) Portais RMI/OEM curados (Europa — muitos pagos)
- * 3) Gemini + Google Search grounding (YouTube, engenharia, web)
+ * 1) NHTSA + DTC + OLP torque/labor (se chave)
+ * 2) Portais RMI curados
+ * 3) Gemini grounding (opcional)
  */
 
 import { gatherPublicTechnicalData } from './publicTechnicalApis';
@@ -20,6 +20,16 @@ export type NetworkSearchResult = {
   hits: NetworkHit[];
   queries: string[];
   grounded: boolean;
+  torqueSpecs?: Array<{
+    job?: string;
+    component: string;
+    nm?: number | null;
+    lbFt?: number | null;
+    angleDegrees?: number | null;
+    isCritical?: boolean;
+    notes?: string;
+  }>;
+  laborTimes?: Array<{ job: string; hours?: number; notes?: string }>;
 };
 
 type SearchInput = {
@@ -41,56 +51,51 @@ function buildQueries(input: SearchInput): string[] {
   const model = (input.model || '').trim();
   const code = extractCode(desc);
   const base = [make, model, code || desc.slice(0, 80)].filter(Boolean).join(' ');
-  const queries = [
+  return [
     `${base} diagnostic repair procedure`,
     `${base} TSB technical service bulletin`,
     `${code || base} site:youtube.com diagnosis`,
-    `${base} workshop manual OR service manual Europe OR RMI`,
-  ];
-  if (input.isEv || /ev|hybrid|bms|doip|hvil/i.test(desc + make + model)) {
-    queries.push(`${make} ${model} high voltage isolation BMS diagnosis`);
-  }
-  return queries.filter(Boolean).slice(0, 5);
+    `${base} torque specs workshop`,
+  ].filter(Boolean);
 }
 
 export function curatedTechnicalPortals(make?: string): NetworkHit[] {
   const m = (make || '').toLowerCase();
   const hits: NetworkHit[] = [
     {
-      title: 'NHTSA — recalls e comunicações (EUA, público)',
+      title: 'NHTSA — recalls (público)',
       url: 'https://www.nhtsa.gov/recalls',
-      snippet: 'Base pública de recalls e manufacturer communications.',
+      snippet: 'Recalls e manufacturer communications.',
       kind: 'tsb',
     },
     {
-      title: 'Open Labor Project — DTC',
-      url: 'https://openlaborproject.com/eu/dtc-codes/',
-      snippet: 'Códigos OBD-II e dados auxiliares (API com chave opcional).',
+      title: 'Open Labor Project — DTC / torque / labor',
+      url: 'https://openlaborproject.com/docs/api',
+      snippet: 'Requer OPEN_LABOR_API_KEY na Vercel.',
       kind: 'web',
     },
   ];
-
   if (/volkswagen|vw|audi|seat|skoda|cupra/.test(m)) {
     hits.push({
-      title: 'Volkswagen Group erWin (RMI Europa — licença)',
+      title: 'VW Group erWin (RMI — licença)',
       url: 'https://erwin.vwgroup-datahub.com',
-      snippet: 'Portal oficial RMI — acesso pago/regulamentado para oficinas.',
+      snippet: 'Portal oficial RMI Europa.',
       kind: 'oem',
     });
   }
   if (/bmw|mini/.test(m)) {
     hits.push({
-      title: 'BMW AOS (RMI Europa — licença)',
+      title: 'BMW AOS (RMI)',
       url: 'https://aos.bmwgroup.com',
-      snippet: 'Informação oficial BMW Group.',
+      snippet: 'Informação oficial BMW.',
       kind: 'oem',
     });
   }
   if (/toyota|lexus/.test(m)) {
     hits.push({
-      title: 'Toyota Tech Europe (RMI)',
+      title: 'Toyota Tech Europe',
       url: 'https://www.toyota-tech.eu',
-      snippet: 'Portal técnico Toyota Europa.',
+      snippet: 'Portal técnico Toyota EU.',
       kind: 'oem',
     });
   }
@@ -98,40 +103,8 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
     hits.push({
       title: 'Ford Service Info Europa',
       url: 'https://www.fordserviceinfo.com/',
-      snippet: 'Portal oficial Ford Europa.',
+      snippet: 'Portal oficial Ford EU.',
       kind: 'oem',
-    });
-  }
-  if (/renault|dacia/.test(m)) {
-    hits.push({
-      title: 'Renault Dialogys / RMI',
-      url: 'https://newdialogys.renault.com',
-      snippet: 'Portal técnico Renault Group.',
-      kind: 'oem',
-    });
-  }
-  if (/hyundai|kia/.test(m)) {
-    hits.push({
-      title: 'Hyundai Service Europe',
-      url: 'https://service.hyundai-motor.com',
-      snippet: 'Portal de serviço Hyundai Europa.',
-      kind: 'oem',
-    });
-  }
-  if (/mercedes|benz/.test(m)) {
-    hits.push({
-      title: 'Mercedes-Benz service info',
-      url: 'https://service-info.mercedes-benz-trucks.com',
-      snippet: 'Acesso controlado / licença.',
-      kind: 'oem',
-    });
-  }
-  if (/peugeot|citroen|citroën|opel|ds/.test(m)) {
-    hits.push({
-      title: 'Stellantis Service Box (parcial público)',
-      url: 'https://public.servicebox.peugeot.com',
-      snippet: 'Manuais de utilização e parte da info técnica Stellantis.',
-      kind: 'manual',
     });
   }
   return hits;
@@ -142,24 +115,17 @@ function extractGroundingSources(response: any): NetworkHit[] {
   try {
     const meta =
       response?.candidates?.[0]?.groundingMetadata || response?.groundingMetadata || {};
-    const chunks = meta.groundingChunks || [];
-    for (const ch of chunks) {
-      const web = ch.web || ch.retrievedContext || {};
+    for (const ch of meta.groundingChunks || []) {
+      const web = ch.web || {};
       const uri = web.uri || web.url;
       const title = web.title || 'Fonte web';
       if (!uri && !title) continue;
-      let kind = 'web';
-      const u = String(uri || '').toLowerCase();
-      if (u.includes('youtube')) kind = 'youtube';
-      else if (u.includes('facebook')) kind = 'forum';
-      else if (/nhtsa|tsb|bulletin/.test(u + title.toLowerCase())) kind = 'tsb';
-      else if (/erwin|techinfo|rmi/.test(u)) kind = 'oem';
-      hits.push({ title, url: uri, snippet: web.snippet || title, kind });
+      hits.push({ title, url: uri, snippet: web.snippet || title, kind: 'web' });
     }
   } catch {
     /* ignore */
   }
-  return hits.slice(0, 10);
+  return hits.slice(0, 8);
 }
 
 async function geminiGroundedSummary(
@@ -171,18 +137,15 @@ async function geminiGroundedSummary(
   try {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
-    const code = extractCode(input.description || '') || '';
     const prompt = [
-      'Você é pesquisador técnico automotivo para oficinas no Brasil.',
-      'Com base na EVIDÊNCIA PÚBLICA abaixo e na busca web, resuma soluções reais.',
-      'Português, máx. 8 frases curtas. Não invente manual grátis se for pago.',
+      'Pesquisador técnico automotivo. Resuma em PT-BR (máx. 8 frases).',
+      'Use a evidência pública. Não invente torque sem fonte.',
       '',
-      'EVIDÊNCIA PÚBLICA (NHTSA / DTC):',
+      'EVIDÊNCIA:',
       publicBlock,
       '',
-      `Marca: ${input.make || 'N/I'} | Modelo: ${input.model || 'N/I'}`,
-      `Chassi: ${input.chassis || 'N/I'}`,
-      `Código/sintoma: ${code || input.description || 'N/I'}`,
+      `Marca: ${input.make || 'N/I'} Modelo: ${input.model || 'N/I'}`,
+      `Relato: ${input.description || 'N/I'}`,
       `Consultas: ${queries.join(' | ')}`,
     ].join('\n');
 
@@ -197,9 +160,7 @@ async function geminiGroundedSummary(
           response.text ||
           response.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') ||
           '';
-        if (text?.trim()) {
-          return { text: text.trim(), hits: extractGroundingSources(response) };
-        }
+        if (text?.trim()) return { text: text.trim(), hits: extractGroundingSources(response) };
       } catch (err: any) {
         console.error('[networkSearch] grounding', model, err?.message || err);
       }
@@ -210,9 +171,6 @@ async function geminiGroundedSummary(
   return null;
 }
 
-/**
- * Pipeline completo de rede — sempre tenta APIs públicas; grounding se houver chave.
- */
 export async function searchTechnicalNetwork(
   input: SearchInput,
   apiKey?: string
@@ -220,8 +178,7 @@ export async function searchTechnicalNetwork(
   const queries = buildQueries(input);
   const curated = curatedTechnicalPortals(input.make);
 
-  // 1) Fontes públicas estruturadas (sem chave)
-  let publicBundle;
+  let publicBundle: Awaited<ReturnType<typeof gatherPublicTechnicalData>>;
   try {
     publicBundle = await gatherPublicTechnicalData({
       description: input.description,
@@ -230,11 +187,11 @@ export async function searchTechnicalNetwork(
       chassis: input.chassis,
     });
   } catch (err) {
-    console.error('[networkSearch] public APIs', err);
+    console.error('[networkSearch] public', err);
     publicBundle = {
-      summaryLines: ['APIs públicas indisponíveis nesta execução.'],
-      hits: [] as NetworkHit[],
-      sources: [] as string[],
+      summaryLines: ['APIs públicas indisponíveis.'],
+      hits: [],
+      sources: [],
     };
   }
 
@@ -247,7 +204,6 @@ export async function searchTechnicalNetwork(
 
   const publicBlock = (publicBundle.summaryLines || []).join('\n');
 
-  // 2) Grounding Gemini (opcional)
   let groundedText = '';
   let groundedHits: NetworkHit[] = [];
   let grounded = false;
@@ -260,30 +216,29 @@ export async function searchTechnicalNetwork(
     }
   }
 
-  const summary = [
-    publicBlock,
-    groundedText ? '\n---\nBusca web:\n' + groundedText : '',
-  ]
+  const summary = [publicBlock, groundedText ? '\n---\nBusca web:\n' + groundedText : '']
     .filter(Boolean)
     .join('\n')
     .trim();
 
-  const hits = [...publicHits, ...groundedHits, ...curated].slice(0, 18);
+  const hits = [...publicHits, ...groundedHits, ...curated].slice(0, 20);
   const sources = Array.from(
     new Set([
       ...(publicBundle.sources || []),
       ...hits.map((h) => (h.url ? `${h.title} — ${h.url}` : h.title)),
     ])
-  ).slice(0, 16);
+  ).slice(0, 18);
 
   return {
     summary:
       summary ||
-      'Use o checklist local. Consulte NHTSA e portais RMI da montadora quando necessário.',
+      'Sem evidência de rede. Configure OPEN_LABOR_API_KEY para torque e tempos OLP.',
     sources,
     hits,
     queries,
     grounded,
+    torqueSpecs: publicBundle.torqueSpecs,
+    laborTimes: publicBundle.laborTimes,
   };
 }
 
@@ -291,7 +246,7 @@ export function mergeNetworkIntoDiagnosis(
   diagnosis: Record<string, unknown>,
   network: NetworkSearchResult
 ): Record<string, unknown> {
-  return {
+  const out: Record<string, unknown> = {
     ...diagnosis,
     networkNotes: network.summary,
     networkSources: network.sources,
@@ -300,6 +255,26 @@ export function mergeNetworkIntoDiagnosis(
     networkGrounded: network.grounded,
     originExplanation:
       (diagnosis.originExplanation as string) ||
-      'Cruzamento entre laudo da IA e evidências públicas (NHTSA, DTC, rede).',
+      'Cruzamento IA + fontes públicas (NHTSA, DTC, OLP torque/labor).',
   };
+
+  if (network.torqueSpecs?.length) {
+    out.torqueSpecs = network.torqueSpecs;
+  }
+  if (network.laborTimes?.length) {
+    out.laborTimes = network.laborTimes;
+
+    // Enriquece orçamento se a IA não trouxe itens detalhados
+    const existing = (diagnosis.budgetItems as any[]) || [];
+    if (existing.length <= 2) {
+      const laborItems = network.laborTimes.slice(0, 3).map((l) => ({
+        item: l.job,
+        category: 'Mão de Obra',
+        estimatedCost: Math.round((l.hours || 1) * 180),
+      }));
+      out.budgetItems = [...laborItems, ...existing].slice(0, 6);
+    }
+  }
+
+  return out;
 }
