@@ -1,15 +1,31 @@
 /**
- * Fontes técnicas públicas e gratuitas integráveis no OficIA.
- * - NHTSA (EUA): recalls, reclamações, decode VIN
- * - Base local de DTC OBD-II comuns (domínio público / conhecimento técnico padrão)
- * Open Labor Project: opcional via OPEN_LABOR_API_KEY (Cloudflare exige chave)
+ * Fontes técnicas públicas / opcionais para o OficIA.
+ * - NHTSA: recalls, complaints, VIN
+ * - DTC local OBD-II
+ * - Open Labor Project (OPEN_LABOR_API_KEY): dtc-codes, torque-specs, labor-times
  */
 
 export type PublicHit = {
   title: string;
   url?: string;
   snippet: string;
-  kind: 'recall' | 'complaint' | 'dtc' | 'vin' | 'oem' | 'web';
+  kind: 'recall' | 'complaint' | 'dtc' | 'vin' | 'oem' | 'web' | 'torque' | 'labor';
+};
+
+export type TorqueSpecRow = {
+  job?: string;
+  component: string;
+  nm?: number | null;
+  lbFt?: number | null;
+  angleDegrees?: number | null;
+  isCritical?: boolean;
+  notes?: string;
+};
+
+export type LaborTimeRow = {
+  job: string;
+  hours?: number;
+  notes?: string;
 };
 
 export type PublicTechnicalBundle = {
@@ -18,6 +34,8 @@ export type PublicTechnicalBundle = {
   sources: string[];
   vinDecoded?: { make?: string; model?: string; year?: string; plant?: string };
   dtc?: { code: string; title: string; meaning: string; checks: string[] };
+  torqueSpecs?: TorqueSpecRow[];
+  laborTimes?: LaborTimeRow[];
 };
 
 function extractDtc(text: string): string | null {
@@ -30,11 +48,20 @@ function extractYear(text: string): string | undefined {
   return m ? m[0] : undefined;
 }
 
-/** DTC OBD-II genéricos mais usados em oficina (referência pública). */
-const DTC_DB: Record<
-  string,
-  { title: string; meaning: string; checks: string[] }
-> = {
+/** Mapeia sintoma/DTC → job slug OLP (quando possível). */
+function inferJobSlug(description: string, code?: string | null): string | undefined {
+  const q = (description || '').toLowerCase();
+  if (code && /^P030/.test(code)) return 'spark-plugs';
+  if (/vela|spark|bobina|misfire|falha de combust/.test(q)) return 'spark-plugs';
+  if (/pastilha|freio|brake/.test(q)) return 'brake-pads-front';
+  if (/óleo|oil change|troca de oleo|troca de óleo/.test(q)) return 'oil-change';
+  if (/correi|timing belt|correia dentada/.test(q)) return 'timing-belt';
+  if (/bateria|battery/.test(q)) return 'battery-replacement';
+  if (/filtro de ar|air filter/.test(q)) return 'air-filter';
+  return undefined;
+}
+
+const DTC_DB: Record<string, { title: string; meaning: string; checks: string[] }> = {
   P0300: {
     title: 'Random/Multiple Cylinder Misfire Detected',
     meaning:
@@ -50,7 +77,7 @@ const DTC_DB: Record<
   P0301: {
     title: 'Cylinder 1 Misfire Detected',
     meaning: 'Falha de combustão no cilindro 1.',
-    checks: ['Bobina/vela do cil. 1', 'Injetor 1', 'Compressão cil. 1', 'Cabos/conectores'],
+    checks: ['Bobina/vela do cil. 1', 'Injetor 1', 'Compressão cil. 1'],
   },
   P0302: {
     title: 'Cylinder 2 Misfire Detected',
@@ -69,63 +96,53 @@ const DTC_DB: Record<
   },
   P0171: {
     title: 'System Too Lean (Bank 1)',
-    meaning: 'Mistura pobre no banco 1 — excesso de ar ou falta de combustível.',
+    meaning: 'Mistura pobre no banco 1.',
     checks: ['Vazamento de admissão', 'MAF/MAP', 'Pressão combustível', 'Sonda lambda'],
   },
   P0172: {
     title: 'System Too Rich (Bank 1)',
     meaning: 'Mistura rica no banco 1.',
-    checks: ['Injetores vazando', 'Sensor MAF', 'Pressão combustível alta', 'Filtro de ar'],
+    checks: ['Injetores vazando', 'Sensor MAF', 'Pressão combustível alta'],
   },
   P0420: {
     title: 'Catalyst System Efficiency Below Threshold (Bank 1)',
-    meaning: 'Eficiência do catalisador abaixo do limite no banco 1.',
-    checks: ['Sondas antes/depois do catalisador', 'Fugas de escape', 'Catalisador', 'Misfire prévio'],
+    meaning: 'Eficiência do catalisador abaixo do limite (banco 1).',
+    checks: ['Sondas', 'Fugas de escape', 'Catalisador', 'Misfire prévio'],
   },
   P0430: {
     title: 'Catalyst System Efficiency Below Threshold (Bank 2)',
-    meaning: 'Eficiência do catalisador abaixo do limite no banco 2.',
-    checks: ['Sondas banco 2', 'Fugas de escape', 'Catalisador banco 2'],
+    meaning: 'Eficiência do catalisador abaixo do limite (banco 2).',
+    checks: ['Sondas banco 2', 'Fugas de escape', 'Catalisador'],
   },
   P0128: {
-    title: 'Coolant Thermostat (Coolant Temperature Below Thermostat Regulating Temperature)',
-    meaning: 'Motor demora a atingir temperatura — termostato ou sensor ECT.',
+    title: 'Coolant Thermostat Temperature Below Regulating',
+    meaning: 'Motor demora a aquecer — termostato ou ECT.',
     checks: ['Termostato', 'Sensor de temperatura', 'Nível de arrefecimento'],
   },
   P0401: {
-    title: 'Exhaust Gas Recirculation Flow Insufficient',
+    title: 'EGR Flow Insufficient',
     meaning: 'Fluxo de EGR insuficiente.',
-    checks: ['Válvula EGR', 'Passagens de EGR carbonizadas', 'Sensor de posição EGR'],
+    checks: ['Válvula EGR', 'Passagens carbonizadas'],
   },
   P0500: {
     title: 'Vehicle Speed Sensor Malfunction',
-    meaning: 'Falha no sensor de velocidade do veículo.',
-    checks: ['Sensor VSS', 'Chicote', 'ABS/módulo de velocidade'],
+    meaning: 'Falha no sensor de velocidade.',
+    checks: ['Sensor VSS', 'Chicote', 'ABS'],
   },
   P0700: {
     title: 'Transmission Control System Malfunction',
-    meaning: 'Falha geral no sistema de controle da transmissão (há códigos específicos no TCM).',
-    checks: ['Ler códigos do módulo da transmissão', 'Nível/ATF', 'Conectores TCM'],
-  },
-  C0035: {
-    title: 'Left Front Wheel Speed Sensor Circuit',
-    meaning: 'Circuito do sensor de velocidade da roda dianteira esquerda (ABS).',
-    checks: ['Sensor ABS DE', 'Anel fônico', 'Chicote ABS'],
-  },
-  B0001: {
-    title: 'Driver Frontal Stage 1 Deployment Control',
-    meaning: 'Circuito do airbag do motorista (diagnóstico restrito — cuidado com SRS).',
-    checks: ['Scanner SRS', 'Não medir resistência do airbag sem procedimento'],
+    meaning: 'Falha geral do controle da transmissão.',
+    checks: ['Códigos do TCM', 'Nível/ATF', 'Conectores'],
   },
   U0100: {
     title: 'Lost Communication With ECM/PCM',
     meaning: 'Perda de comunicação com o módulo do motor.',
-    checks: ['Alimentação/massa ECM', 'Rede CAN', 'Scanner em outros módulos'],
+    checks: ['Alimentação/massa ECM', 'Rede CAN'],
   },
   U0101: {
     title: 'Lost Communication With TCM',
-    meaning: 'Perda de comunicação com o módulo da transmissão.',
-    checks: ['Rede CAN', 'Alimentação TCM', 'Conectores'],
+    meaning: 'Perda de comunicação com o TCM.',
+    checks: ['Rede CAN', 'Alimentação TCM'],
   },
 };
 
@@ -140,6 +157,35 @@ async function fetchJson(url: string, timeoutMs = 8000): Promise<any | null> {
     if (!res.ok) return null;
     return await res.json();
   } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function olpFetch(pathAndQuery: string): Promise<any | null> {
+  const key = process.env.OPEN_LABOR_API_KEY;
+  if (!key) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const res = await fetch(`https://openlaborproject.com${pathAndQuery}`, {
+      signal: ctrl.signal,
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': key,
+        Authorization: `Bearer ${key}`,
+        'User-Agent': 'HENIZA-OficIA/1.0',
+      },
+    });
+    clearTimeout(t);
+    if (!res.ok) {
+      console.warn('[OLP]', pathAndQuery, res.status);
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn('[OLP] fail', pathAndQuery, err);
     return null;
   } finally {
     clearTimeout(t);
@@ -162,11 +208,7 @@ export async function decodeVinNhtsa(vin: string): Promise<PublicTechnicalBundle
   };
 }
 
-export async function fetchNhtsaRecalls(
-  make: string,
-  model: string,
-  year?: string
-): Promise<PublicHit[]> {
+export async function fetchNhtsaRecalls(make: string, model: string, year?: string): Promise<PublicHit[]> {
   if (!make || !model) return [];
   const y = year || '2020';
   const url =
@@ -184,11 +226,7 @@ export async function fetchNhtsaRecalls(
   }));
 }
 
-export async function fetchNhtsaComplaints(
-  make: string,
-  model: string,
-  year?: string
-): Promise<PublicHit[]> {
+export async function fetchNhtsaComplaints(make: string, model: string, year?: string): Promise<PublicHit[]> {
   if (!make || !model) return [];
   const y = year || '2020';
   const url =
@@ -204,47 +242,123 @@ export async function fetchNhtsaComplaints(
   }));
 }
 
-/** Open Labor Project — só se houver chave (evita Cloudflare bloqueando). */
 export async function fetchOpenLaborDtc(code: string): Promise<PublicHit | null> {
-  const key = process.env.OPEN_LABOR_API_KEY;
-  if (!key || !code) return null;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(
-      `https://openlaborproject.com/api/v1/dtc-codes?code=${encodeURIComponent(code)}`,
-      {
-        signal: ctrl.signal,
-        headers: {
-          Accept: 'application/json',
-          'x-api-key': key,
-          'User-Agent': 'HENIZA-OficIA/1.0',
-        },
-      }
-    );
-    clearTimeout(t);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const row = Array.isArray(data) ? data[0] : data?.data?.[0] || data;
-    if (!row) return null;
-    return {
-      title: `OLP ${code}: ${row.title || row.description || 'DTC'}`,
-      url: `https://openlaborproject.com/eu/dtc-codes/`,
-      snippet: String(row.description || row.summary || row.meaning || JSON.stringify(row)).slice(0, 300),
-      kind: 'dtc',
-    };
-  } catch {
-    return null;
-  }
+  const data = await olpFetch(`/api/v1/dtc-codes?code=${encodeURIComponent(code)}`);
+  if (!data) return null;
+  const row = Array.isArray(data) ? data[0] : data?.data?.[0] || data?.data || data;
+  if (!row || typeof row !== 'object') return null;
+  return {
+    title: `OLP ${code}: ${(row as any).title || (row as any).description || 'DTC'}`,
+    url: 'https://openlaborproject.com/eu/dtc-codes/',
+    snippet: String(
+      (row as any).description || (row as any).summary || (row as any).meaning || ''
+    ).slice(0, 300),
+    kind: 'dtc',
+  };
+}
+
+/**
+ * GET /api/v1/torque-specs?make=&model=&year=&job=
+ * Resposta típica: { data: { torqueSpecs: [ { component, nm, lbFt, ... } ] } }
+ */
+export async function fetchOpenLaborTorqueSpecs(input: {
+  make: string;
+  model: string;
+  year: string;
+  job?: string;
+}): Promise<{ rows: TorqueSpecRow[]; hits: PublicHit[] }> {
+  if (!input.make || !input.model || !input.year) return { rows: [], hits: [] };
+
+  const qs = new URLSearchParams({
+    make: input.make.toLowerCase(),
+    model: input.model.toLowerCase().replace(/\s+/g, '-'),
+    year: input.year,
+  });
+  if (input.job) qs.set('job', input.job);
+
+  const data = await olpFetch(`/api/v1/torque-specs?${qs.toString()}`);
+  if (!data) return { rows: [], hits: [] };
+
+  const list: any[] =
+    data?.data?.torqueSpecs ||
+    data?.torqueSpecs ||
+    data?.data ||
+    (Array.isArray(data) ? data : []);
+
+  if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
+
+  const rows: TorqueSpecRow[] = list.slice(0, 12).map((t: any) => ({
+    job: t.job,
+    component: t.component || t.name || 'Fixador',
+    nm: t.nm ?? t.torqueNm ?? null,
+    lbFt: t.lbFt ?? t.torqueLbFt ?? null,
+    angleDegrees: t.angleDegrees ?? t.angle ?? null,
+    isCritical: Boolean(t.isCritical),
+    notes: t.notes,
+  }));
+
+  const hits: PublicHit[] = rows.slice(0, 6).map((t) => ({
+    title: `Torque OLP: ${t.component}${t.nm != null ? ` — ${t.nm} N·m` : ''}${t.lbFt != null ? ` (${t.lbFt} lb·ft)` : ''}`,
+    url: 'https://openlaborproject.com/docs/api',
+    snippet: [t.job, t.isCritical ? 'CRÍTICO' : '', t.notes, t.angleDegrees != null ? `Ângulo: ${t.angleDegrees}°` : '']
+      .filter(Boolean)
+      .join(' · '),
+    kind: 'torque' as const,
+  }));
+
+  return { rows, hits };
+}
+
+/**
+ * GET /api/v1/labor-times?make=&model=&year=&job=
+ */
+export async function fetchOpenLaborLaborTimes(input: {
+  make: string;
+  model: string;
+  year: string;
+  job?: string;
+}): Promise<{ rows: LaborTimeRow[]; hits: PublicHit[] }> {
+  if (!input.make || !input.model || !input.year) return { rows: [], hits: [] };
+
+  const qs = new URLSearchParams({
+    make: input.make.toLowerCase(),
+    model: input.model.toLowerCase().replace(/\s+/g, '-'),
+    year: input.year,
+  });
+  if (input.job) qs.set('job', input.job);
+
+  const data = await olpFetch(`/api/v1/labor-times?${qs.toString()}`);
+  if (!data) return { rows: [], hits: [] };
+
+  const list: any[] =
+    data?.data?.laborTimes ||
+    data?.data?.jobs ||
+    data?.laborTimes ||
+    data?.data ||
+    (Array.isArray(data) ? data : []);
+
+  if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
+
+  const rows: LaborTimeRow[] = list.slice(0, 10).map((j: any) => ({
+    job: j.job || j.name || j.description || 'Serviço',
+    hours: typeof j.hours === 'number' ? j.hours : typeof j.time === 'number' ? j.time : undefined,
+    notes: j.notes,
+  }));
+
+  const hits: PublicHit[] = rows.slice(0, 5).map((j) => ({
+    title: `Mão de obra OLP: ${j.job}${j.hours != null ? ` — ${j.hours} h` : ''}`,
+    url: 'https://openlaborproject.com/docs/api',
+    snippet: j.notes || 'Tempo de referência Open Labor Project',
+    kind: 'labor' as const,
+  }));
+
+  return { rows, hits };
 }
 
 export function lookupLocalDtc(code: string) {
   return DTC_DB[code.toUpperCase()] || null;
 }
 
-/**
- * Agrega tudo que é público e gratuito para o laudo.
- */
 export async function gatherPublicTechnicalData(input: {
   description?: string;
   make?: string;
@@ -262,8 +376,9 @@ export async function gatherPublicTechnicalData(input: {
   const sources: string[] = [];
   let vinDecoded: PublicTechnicalBundle['vinDecoded'];
   let dtc: PublicTechnicalBundle['dtc'];
+  let torqueSpecs: TorqueSpecRow[] | undefined;
+  let laborTimes: LaborTimeRow[] | undefined;
 
-  // VIN decode
   if (input.chassis && input.chassis.replace(/\s/g, '').length >= 11) {
     vinDecoded = (await decodeVinNhtsa(input.chassis)) || undefined;
     if (vinDecoded?.make) {
@@ -279,11 +394,10 @@ export async function gatherPublicTechnicalData(input: {
         snippet: `${vinDecoded.make} ${vinDecoded.model} ${vinDecoded.year}`,
         kind: 'vin',
       });
-      sources.push('NHTSA vPIC (VIN decode)');
+      sources.push('NHTSA vPIC');
     }
   }
 
-  // DTC local
   if (code) {
     const local = lookupLocalDtc(code);
     if (local) {
@@ -294,17 +408,54 @@ export async function gatherPublicTechnicalData(input: {
         snippet: local.meaning + ' Verificações: ' + local.checks.join('; '),
         kind: 'dtc',
       });
-      sources.push('Base DTC OBD-II (referência pública OficIA)');
+      sources.push('Base DTC OficIA');
     }
     const olp = await fetchOpenLaborDtc(code);
     if (olp) {
       hits.push(olp);
-      sources.push('Open Labor Project');
+      sources.push('Open Labor Project (DTC)');
       summaryLines.push(olp.snippet);
     }
   }
 
-  // NHTSA recalls + complaints (em paralelo)
+  // Torque + labor (precisa make/model/year + chave OLP)
+  const job = inferJobSlug(desc, code);
+  const yearForOlp = year || '2018';
+  if (make && model && process.env.OPEN_LABOR_API_KEY) {
+    const [torque, labor] = await Promise.all([
+      fetchOpenLaborTorqueSpecs({ make, model, year: yearForOlp, job }),
+      fetchOpenLaborLaborTimes({ make, model, year: yearForOlp, job }),
+    ]);
+
+    if (torque.rows.length) {
+      torqueSpecs = torque.rows;
+      hits.push(...torque.hits);
+      sources.push('Open Labor Project (torque-specs)');
+      const crit = torque.rows.filter((r) => r.isCritical).slice(0, 3);
+      summaryLines.push(
+        `Torques OLP (${torque.rows.length}): ` +
+          torque.rows
+            .slice(0, 4)
+            .map((r) => `${r.component} ${r.nm != null ? r.nm + ' N·m' : ''}`.trim())
+            .join('; ') +
+          (crit.length ? ` | Críticos: ${crit.map((c) => c.component).join(', ')}` : '')
+      );
+    }
+
+    if (labor.rows.length) {
+      laborTimes = labor.rows;
+      hits.push(...labor.hits);
+      sources.push('Open Labor Project (labor-times)');
+      summaryLines.push(
+        `Tempos OLP: ` +
+          labor.rows
+            .slice(0, 4)
+            .map((r) => `${r.job}${r.hours != null ? ` (${r.hours} h)` : ''}`)
+            .join('; ')
+      );
+    }
+  }
+
   if (make && model) {
     const years = year ? [year] : ['2022', '2020', '2018'];
     for (const y of years.slice(0, 2)) {
@@ -314,22 +465,20 @@ export async function gatherPublicTechnicalData(input: {
       ]);
       if (recalls.length) {
         hits.push(...recalls);
-        summaryLines.push(
-          `NHTSA ${make} ${model} ${y}: ${recalls.length} recall(s) listado(s). Ex.: ${recalls[0].title}`
-        );
-        sources.push('NHTSA Recalls API');
+        summaryLines.push(`NHTSA ${make} ${model} ${y}: ${recalls.length} recall(s).`);
+        sources.push('NHTSA Recalls');
         break;
       }
       if (complaints.length && !hits.some((h) => h.kind === 'complaint')) {
         hits.push(...complaints);
-        sources.push('NHTSA Complaints API');
+        sources.push('NHTSA Complaints');
       }
     }
   }
 
   if (!summaryLines.length) {
     summaryLines.push(
-      'Sem recalls/DTC públicos específicos nesta consulta. Use checklist local e portais RMI quando necessário.'
+      'Sem dados públicos específicos. Com OPEN_LABOR_API_KEY, torque e tempos entram automaticamente.'
     );
   }
 
@@ -337,9 +486,11 @@ export async function gatherPublicTechnicalData(input: {
 
   return {
     summaryLines,
-    hits: hits.slice(0, 12),
+    hits: hits.slice(0, 16),
     sources: Array.from(new Set(sources)),
     vinDecoded,
     dtc,
+    torqueSpecs,
+    laborTimes,
   };
 }
