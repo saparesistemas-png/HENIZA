@@ -13,6 +13,7 @@ import {
   Copy,
   Check,
   RotateCcw,
+  ExternalLink,
 } from 'lucide-react';
 
 export type DiagnosisData = {
@@ -32,6 +33,7 @@ export type DiagnosisData = {
   source?: string;
   networkNotes?: string;
   networkSources?: string[];
+  networkHits?: Array<{ title: string; url?: string; snippet?: string; kind?: string }>;
   [key: string]: unknown;
 };
 
@@ -85,14 +87,13 @@ export default function DiagnosisResultFlow({
   const networkText =
     data.networkNotes ||
     data.originExplanation ||
-    'Cruzamento com base técnica da rede OficIA / manuais quando disponíveis. Validar sempre no veículo.';
+    'Cruzamento com fontes públicas (NHTSA, DTC) e portais RMI quando aplicável.';
 
+  const networkHits = (data.networkHits || []).slice(0, 8);
   const networkSources =
     data.networkSources && data.networkSources.length
       ? data.networkSources
-      : [data.source || 'Base técnica OficIA', data.codeTypeLabel || data.originBadge || 'Classificação do código/sintoma'].filter(
-          Boolean
-        ) as string[];
+      : ([data.source || 'Base OficIA', data.codeTypeLabel || data.originBadge].filter(Boolean) as string[]);
 
   const checks = data.correctiveChecklist || [];
 
@@ -110,6 +111,9 @@ export default function DiagnosisResultFlow({
       '',
       'Notas:',
       data.diagnosticNotes || '',
+      '',
+      'Rede:',
+      networkText,
       '',
       'Verificações:',
       ...checks.map((c, i) => `${i + 1}. ${c}`),
@@ -132,21 +136,17 @@ export default function DiagnosisResultFlow({
           <h3 className="text-sm font-black text-white uppercase tracking-wide">Diagnóstico 2 — Avaliação do profissional</h3>
         </div>
         <p className="text-xs text-slate-300">
-          A IA sugeriu: <span className="text-tech-destaque font-semibold">{data.problemName}</span>. Descreva o que você observou e a conclusão da oficina.
+          A IA sugeriu: <span className="text-tech-destaque font-semibold">{data.problemName}</span>. Descreva o que você observou.
         </p>
         <textarea
           value={mechanicNotes}
           onChange={(e) => setMechanicNotes(e.target.value)}
           rows={5}
-          placeholder="Ex.: Confirmei P0301 no cilindro 1. Bobina com faísca fraca. Vou trocar bobina e velas..."
+          placeholder="Ex.: Confirmei P0301. Bobina com faísca fraca..."
           className="w-full rounded-xl bg-tech-fundo border border-tech-borda text-sm text-white p-3 outline-none focus:border-tech-destaque/50"
         />
         <div className="flex flex-col sm:flex-row gap-2">
-          <button
-            type="button"
-            onClick={() => setPhase('compare')}
-            className="px-4 py-2.5 rounded-xl border border-tech-borda text-xs font-bold text-slate-300 flex items-center justify-center gap-1.5"
-          >
+          <button type="button" onClick={() => setPhase('compare')} className="px-4 py-2.5 rounded-xl border border-tech-borda text-xs font-bold text-slate-300 flex items-center justify-center gap-1.5">
             <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao laudo IA
           </button>
           <button
@@ -158,7 +158,7 @@ export default function DiagnosisResultFlow({
               }
               onOverrideSubmit(mechanicNotes.trim());
               setPhase('budget');
-              setSuccessToast('Avaliação do profissional registrada. Revise o orçamento.');
+              setSuccessToast('Avaliação registrada. Revise o orçamento.');
             }}
             className="px-4 py-2.5 rounded-xl bg-tech-destaque text-tech-fundo text-xs font-black flex items-center justify-center gap-1.5"
           >
@@ -178,56 +178,34 @@ export default function DiagnosisResultFlow({
             {phase === 'done' ? 'Orçamento aprovado' : 'Orçamento sugerido pela IA'}
           </h3>
         </div>
-
-        <p className="text-xs text-slate-400">
-          {vehicleLabel} · Placa {plate || 'N/I'}
-        </p>
-
+        <p className="text-xs text-slate-400">{vehicleLabel} · Placa {plate || 'N/I'}</p>
         <div className="space-y-2">
-          {budgetItems.length === 0 && (
-            <p className="text-xs text-slate-400">Nenhum item de orçamento retornado. Você pode montar manualmente depois.</p>
-          )}
           {budgetItems.map((item, idx) => (
             <label
               key={idx}
               className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${
-                selectedItems[idx]
-                  ? 'border-tech-destaque/40 bg-tech-destaque/5'
-                  : 'border-tech-borda bg-tech-fundo/50 opacity-70'
+                selectedItems[idx] ? 'border-tech-destaque/40 bg-tech-destaque/5' : 'border-tech-borda opacity-70'
               }`}
             >
-              <input
-                type="checkbox"
-                checked={!!selectedItems[idx]}
-                onChange={() => toggleItem(idx)}
-                disabled={phase === 'done'}
-                className="mt-1"
-              />
+              <input type="checkbox" checked={!!selectedItems[idx]} onChange={() => toggleItem(idx)} disabled={phase === 'done'} className="mt-1" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-white font-semibold">{item.item}</p>
                 <p className="text-[11px] text-slate-400">{item.category}</p>
               </div>
-              <p className="text-sm font-bold text-tech-destaque whitespace-nowrap">
-                {money(Number(item.estimatedCost) || 0)}
-              </p>
+              <p className="text-sm font-bold text-tech-destaque">{money(Number(item.estimatedCost) || 0)}</p>
             </label>
           ))}
         </div>
-
         <div className="flex items-center justify-between pt-2 border-t border-tech-borda">
           <span className="text-xs text-slate-400">Total selecionado</span>
           <span className="text-lg font-black text-tech-destaque">{money(total)}</span>
         </div>
-
         {phase === 'budget' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => {
-                onConfirmBudget(
-                  budgetItems.filter((_, i) => selectedItems[i]),
-                  total
-                );
+                onConfirmBudget(budgetItems.filter((_, i) => selectedItems[i]), total);
                 setPhase('done');
                 setSuccessToast('Orçamento aprovado e registrado.');
               }}
@@ -235,26 +213,14 @@ export default function DiagnosisResultFlow({
             >
               <CheckCircle2 className="w-4 h-4" /> Aprovar orçamento
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPhase('compare');
-                setSuccessToast('Orçamento não aprovado. Você pode revisar o diagnóstico.');
-              }}
-              className="py-3 rounded-xl border border-red-500/40 text-red-300 text-xs font-bold flex items-center justify-center gap-1.5"
-            >
+            <button type="button" onClick={() => setPhase('compare')} className="py-3 rounded-xl border border-red-500/40 text-red-300 text-xs font-bold flex items-center justify-center gap-1.5">
               <XCircle className="w-4 h-4" /> Não aprovar
             </button>
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row gap-2">
             {whatsappShareUrl && (
-              <a
-                href={whatsappShareUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold flex items-center justify-center gap-1.5"
-              >
+              <a href={whatsappShareUrl} target="_blank" rel="noopener noreferrer" className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold flex items-center justify-center gap-1.5">
                 <Share2 className="w-3.5 h-3.5" /> WhatsApp
               </a>
             )}
@@ -274,23 +240,15 @@ export default function DiagnosisResultFlow({
     );
   }
 
-  // phase === 'compare'
   return (
     <section id="tela-retorno" className="space-y-4 animate-slideUp">
       <div className="flex items-center justify-between gap-2 px-1">
         <h3 className="text-sm font-black text-white uppercase tracking-wide">Laudo para validação</h3>
-        <span
-          className={`text-[10px] font-black px-2.5 py-1 rounded-lg border ${
-            isHigh
-              ? 'bg-red-500/15 text-red-300 border-red-500/40'
-              : 'bg-amber-500/15 text-amber-200 border-amber-500/40'
-          }`}
-        >
+        <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg border ${isHigh ? 'bg-red-500/15 text-red-300 border-red-500/40' : 'bg-amber-500/15 text-amber-200 border-amber-500/40'}`}>
           Gravidade: {severity}
         </span>
       </div>
 
-      {/* Quadro 1: IA x Rede */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-tech-cartao rounded-2xl border border-tech-destaque/35 p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -307,39 +265,58 @@ export default function DiagnosisResultFlow({
           )}
         </div>
 
-        <div className="bg-tech-cartao rounded-2xl border border-cyan-500/30 p-4 space-y-3">
+        <div className="bg-tech-cartao rounded-2xl border border-cyan-500/30 p-4 space-y-3 max-h-[28rem] overflow-y-auto">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-cyan-400" />
             <p className="text-[11px] font-black uppercase tracking-wider text-cyan-300">1 · Informações da rede</p>
           </div>
-          <p className="text-xs text-slate-300 leading-relaxed">{networkText}</p>
-          <ul className="space-y-1.5">
-            {networkSources.map((s, i) => (
-              <li key={i} className="text-[11px] text-slate-400 flex gap-2">
-                <span className="text-cyan-400">•</span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ul>
-          {data.supplierCategory && (
-            <p className="text-[11px] text-slate-400">
-              Categoria: <span className="text-slate-200">{String(data.supplierCategory)}</span>
-            </p>
+          <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{networkText}</p>
+
+          {networkHits.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <p className="text-[10px] font-bold text-cyan-400/80 uppercase">Fontes e evidências</p>
+              {networkHits.map((h, i) => (
+                <div key={i} className="rounded-lg bg-tech-fundo/60 border border-tech-borda/50 p-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[11px] font-semibold text-slate-100 leading-snug">{h.title}</p>
+                    {h.kind && (
+                      <span className="text-[9px] uppercase tracking-wide text-cyan-400/80 shrink-0">{h.kind}</span>
+                    )}
+                  </div>
+                  {h.snippet && <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{h.snippet}</p>}
+                  {h.url && (
+                    <a
+                      href={h.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-cyan-300 hover:text-cyan-200"
+                    >
+                      Abrir fonte <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {networkHits.length === 0 && (
+            <ul className="space-y-1.5">
+              {networkSources.slice(0, 6).map((s, i) => (
+                <li key={i} className="text-[11px] text-slate-400 flex gap-2">
+                  <span className="text-cyan-400">•</span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>
 
-      {/* Quadro 2: sugestões do mecânico */}
       <div className="bg-tech-cartao rounded-2xl border border-tech-borda p-4 space-y-3">
         <div className="flex items-center gap-2">
           <Wrench className="w-4 h-4 text-amber-400" />
-          <p className="text-[11px] font-black uppercase tracking-wider text-amber-300">
-            2 · Sugestões para o mecânico verificar
-          </p>
+          <p className="text-[11px] font-black uppercase tracking-wider text-amber-300">2 · Sugestões para o mecânico verificar</p>
         </div>
-        <p className="text-xs text-slate-400">
-          Confira no veículo antes de aprovar o diagnóstico da IA.
-        </p>
         <ol className="space-y-2">
           {checks.map((c, i) => (
             <li key={i} className="flex gap-2 text-sm text-slate-100">
@@ -347,11 +324,7 @@ export default function DiagnosisResultFlow({
               <span>{c}</span>
             </li>
           ))}
-          {checks.length === 0 && (
-            <li className="text-xs text-slate-500">Nenhuma verificação específica retornada.</li>
-          )}
         </ol>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-tech-borda">
           <button
             type="button"
@@ -363,11 +336,7 @@ export default function DiagnosisResultFlow({
           >
             <CheckCircle2 className="w-4 h-4" /> Aprovar diagnóstico da IA
           </button>
-          <button
-            type="button"
-            onClick={() => setPhase('override')}
-            className="py-3 rounded-xl border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center justify-center gap-1.5"
-          >
+          <button type="button" onClick={() => setPhase('override')} className="py-3 rounded-xl border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center justify-center gap-1.5">
             <XCircle className="w-4 h-4" /> Não aprovar — Diagnóstico 2
           </button>
         </div>
