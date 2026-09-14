@@ -1,18 +1,17 @@
 /**
  * Busca técnica na rede pública para o OficIA.
- * - Gemini + Google Search grounding (YouTube, fóruns, sites de engenharia, OEM)
- * - Atalhos para portais RMI/Europa e fontes públicas de DTC/TSB
- *
- * Limitações legais: no Brasil muitos manuais OEM não são livres.
- * Na UE há portais RMI oficiais (muitos pagos, alguns com conteúdo aberto).
- * Nunca inventar link de manual pago como se fosse grátis.
+ * 1) APIs grátis: NHTSA (recalls/complaints/VIN) + DTC local (+ OLP se chave)
+ * 2) Portais RMI/OEM curados (Europa — muitos pagos)
+ * 3) Gemini + Google Search grounding (YouTube, engenharia, web)
  */
+
+import { gatherPublicTechnicalData } from './publicTechnicalApis';
 
 export type NetworkHit = {
   title: string;
   url?: string;
   snippet: string;
-  kind: 'youtube' | 'oem' | 'tsb' | 'forum' | 'manual' | 'web' | 'engineering';
+  kind: string;
 };
 
 export type NetworkSearchResult = {
@@ -42,54 +41,48 @@ function buildQueries(input: SearchInput): string[] {
   const model = (input.model || '').trim();
   const code = extractCode(desc);
   const base = [make, model, code || desc.slice(0, 80)].filter(Boolean).join(' ');
-
   const queries = [
     `${base} diagnostic repair procedure`,
     `${base} TSB technical service bulletin`,
     `${code || base} site:youtube.com diagnosis`,
+    `${base} workshop manual OR service manual Europe OR RMI`,
   ];
-
   if (input.isEv || /ev|hybrid|bms|doip|hvil/i.test(desc + make + model)) {
     queries.push(`${make} ${model} high voltage isolation BMS diagnosis`);
   }
-
-  // Fontes europeias / públicas preferidas
-  queries.push(`${base} workshop manual OR service manual Europe OR RMI`);
-
   return queries.filter(Boolean).slice(0, 5);
 }
 
-/** Portais e fontes públicas úteis (não são scrape; são pistas para o mecânico). */
 export function curatedTechnicalPortals(make?: string): NetworkHit[] {
   const m = (make || '').toLowerCase();
   const hits: NetworkHit[] = [
     {
-      title: 'NHTSA — TSBs e recalls (EUA, público)',
+      title: 'NHTSA — recalls e comunicações (EUA, público)',
       url: 'https://www.nhtsa.gov/recalls',
-      snippet: 'Base pública de recalls e boletins relacionados a segurança.',
+      snippet: 'Base pública de recalls e manufacturer communications.',
       kind: 'tsb',
     },
     {
-      title: 'Open Labor Project — DTC Europa',
+      title: 'Open Labor Project — DTC',
       url: 'https://openlaborproject.com/eu/dtc-codes/',
-      snippet: 'Consulta pública de códigos OBD-II por montadora (Europa).',
+      snippet: 'Códigos OBD-II e dados auxiliares (API com chave opcional).',
       kind: 'web',
     },
   ];
 
-  if (/volkswagen|vw|audi|seat|skoda/.test(m)) {
+  if (/volkswagen|vw|audi|seat|skoda|cupra/.test(m)) {
     hits.push({
-      title: 'Volkswagen erWin (RMI Europa)',
-      url: 'https://volkswagen.erwin-store.com/erwin',
-      snippet: 'Portal oficial RMI UE — manuais/TSB sob assinatura ou acesso regulamentado.',
+      title: 'Volkswagen Group erWin (RMI Europa — licença)',
+      url: 'https://erwin.vwgroup-datahub.com',
+      snippet: 'Portal oficial RMI — acesso pago/regulamentado para oficinas.',
       kind: 'oem',
     });
   }
   if (/bmw|mini/.test(m)) {
     hits.push({
-      title: 'BMW Aftersales Online System (RMI)',
+      title: 'BMW AOS (RMI Europa — licença)',
       url: 'https://aos.bmwgroup.com',
-      snippet: 'Portal oficial BMW Group para informação de reparação (UE).',
+      snippet: 'Informação oficial BMW Group.',
       kind: 'oem',
     });
   }
@@ -97,7 +90,7 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
     hits.push({
       title: 'Toyota Tech Europe (RMI)',
       url: 'https://www.toyota-tech.eu',
-      snippet: 'Informação técnica oficial Toyota Europa.',
+      snippet: 'Portal técnico Toyota Europa.',
       kind: 'oem',
     });
   }
@@ -105,7 +98,7 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
     hits.push({
       title: 'Ford Service Info Europa',
       url: 'https://www.fordserviceinfo.com/',
-      snippet: 'Portal oficial Ford Europa (RMI).',
+      snippet: 'Portal oficial Ford Europa.',
       kind: 'oem',
     });
   }
@@ -113,7 +106,7 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
     hits.push({
       title: 'Renault Dialogys / RMI',
       url: 'https://newdialogys.renault.com',
-      snippet: 'Portal técnico Renault Group (UE).',
+      snippet: 'Portal técnico Renault Group.',
       kind: 'oem',
     });
   }
@@ -127,21 +120,20 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
   }
   if (/mercedes|benz/.test(m)) {
     hits.push({
-      title: 'Mercedes-Benz B2B / service info',
+      title: 'Mercedes-Benz service info',
       url: 'https://service-info.mercedes-benz-trucks.com',
-      snippet: 'Informação de serviço Mercedes (acesso controlado).',
+      snippet: 'Acesso controlado / licença.',
       kind: 'oem',
     });
   }
-  if (/peugeot|citroen|citroën|opel|ds /.test(m) || m === 'ds') {
+  if (/peugeot|citroen|citroën|opel|ds/.test(m)) {
     hits.push({
-      title: 'Stellantis / Service Box (manuais de uso e info técnica)',
+      title: 'Stellantis Service Box (parcial público)',
       url: 'https://public.servicebox.peugeot.com',
-      snippet: 'Parte do conteúdo Stellantis/PSA pode ser consultada publicamente (manuais de uso).',
+      snippet: 'Manuais de utilização e parte da info técnica Stellantis.',
       kind: 'manual',
     });
   }
-
   return hits;
 }
 
@@ -149,130 +141,150 @@ function extractGroundingSources(response: any): NetworkHit[] {
   const hits: NetworkHit[] = [];
   try {
     const meta =
-      response?.candidates?.[0]?.groundingMetadata ||
-      response?.groundingMetadata ||
-      {};
-    const chunks = meta.groundingChunks || meta.groundingSupports || [];
+      response?.candidates?.[0]?.groundingMetadata || response?.groundingMetadata || {};
+    const chunks = meta.groundingChunks || [];
     for (const ch of chunks) {
       const web = ch.web || ch.retrievedContext || {};
       const uri = web.uri || web.url;
       const title = web.title || 'Fonte web';
       if (!uri && !title) continue;
-      let kind: NetworkHit['kind'] = 'web';
+      let kind = 'web';
       const u = String(uri || '').toLowerCase();
-      if (u.includes('youtube.com') || u.includes('youtu.be')) kind = 'youtube';
-      else if (u.includes('facebook.com')) kind = 'forum';
-      else if (/tsb|nhtsa|bulletin/.test(u + title.toLowerCase())) kind = 'tsb';
-      else if (/erwin|techinfo|serviceinfo|rmi|workshop/.test(u)) kind = 'oem';
-      hits.push({
-        title,
-        url: uri,
-        snippet: web.snippet || title,
-        kind,
-      });
-    }
-    const queries = meta.webSearchQueries || [];
-    for (const q of queries) {
-      if (typeof q === 'string') {
-        hits.push({
-          title: `Busca: ${q}`,
-          snippet: 'Consulta usada no grounding Google Search',
-          kind: 'web',
-        });
-      }
+      if (u.includes('youtube')) kind = 'youtube';
+      else if (u.includes('facebook')) kind = 'forum';
+      else if (/nhtsa|tsb|bulletin/.test(u + title.toLowerCase())) kind = 'tsb';
+      else if (/erwin|techinfo|rmi/.test(u)) kind = 'oem';
+      hits.push({ title, url: uri, snippet: web.snippet || title, kind });
     }
   } catch {
     /* ignore */
   }
-  return hits.slice(0, 12);
+  return hits.slice(0, 10);
 }
 
-/**
- * Pesquisa na rede via Gemini + ferramenta googleSearch.
- * Retorna resumo em PT para o quadro "Informações da rede".
- */
-export async function searchTechnicalNetwork(
+async function geminiGroundedSummary(
   input: SearchInput,
-  apiKey: string
-): Promise<NetworkSearchResult> {
-  const queries = buildQueries(input);
-  const curated = curatedTechnicalPortals(input.make);
-  const empty: NetworkSearchResult = {
-    summary:
-      'Busca na rede indisponível no momento. Use o checklist local e valide no veículo. Portais OEM europeus (RMI) e NHTSA são referências públicas/oficiais.',
-    sources: curated.map((h) => h.title),
-    hits: curated,
-    queries,
-    grounded: false,
-  };
-
+  apiKey: string,
+  queries: string[],
+  publicBlock: string
+): Promise<{ text: string; hits: NetworkHit[] } | null> {
   try {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
-
     const code = extractCode(input.description || '') || '';
     const prompt = [
-      'Você é um pesquisador técnico automotivo para oficinas.',
-      'Busque na web soluções REAIS de diagnóstico e reparo.',
-      'Priorize: manuais/TSB públicos, portais OEM Europa (RMI), vídeos técnicos YouTube de engenharia/oficina, posts técnicos de montadoras.',
-      'Evite conteúdo genérico de marketing. Cite causas prováveis e passos de verificação.',
-      'Responda em português do Brasil, texto curto (máx. 8 frases).',
-      'Se a informação for de manual pago, diga que o acesso é pago e indique o portal.',
+      'Você é pesquisador técnico automotivo para oficinas no Brasil.',
+      'Com base na EVIDÊNCIA PÚBLICA abaixo e na busca web, resuma soluções reais.',
+      'Português, máx. 8 frases curtas. Não invente manual grátis se for pago.',
       '',
-      `Marca: ${input.make || 'N/I'}`,
-      `Modelo: ${input.model || 'N/I'}`,
+      'EVIDÊNCIA PÚBLICA (NHTSA / DTC):',
+      publicBlock,
+      '',
+      `Marca: ${input.make || 'N/I'} | Modelo: ${input.model || 'N/I'}`,
       `Chassi: ${input.chassis || 'N/I'}`,
       `Código/sintoma: ${code || input.description || 'N/I'}`,
-      `Consultas sugeridas: ${queries.join(' | ')}`,
+      `Consultas: ${queries.join(' | ')}`,
     ].join('\n');
 
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
-    let lastErr: unknown = null;
-
-    for (const model of models) {
+    for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
       try {
         const response: any = await ai.models.generateContent({
           model,
           contents: prompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-            temperature: 0.2,
-          },
+          config: { tools: [{ googleSearch: {} }], temperature: 0.2 },
         });
-
         const text =
           response.text ||
           response.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') ||
           '';
-
-        const groundedHits = extractGroundingSources(response);
-        const hits = [...groundedHits, ...curated].slice(0, 15);
-        const sources = [
-          ...groundedHits.map((h) => (h.url ? `${h.title} — ${h.url}` : h.title)),
-          ...curated.map((h) => (h.url ? `${h.title} — ${h.url}` : h.title)),
-        ].slice(0, 12);
-
-        if (text && text.trim()) {
-          return {
-            summary: text.trim(),
-            sources,
-            hits,
-            queries,
-            grounded: groundedHits.length > 0 || true,
-          };
+        if (text?.trim()) {
+          return { text: text.trim(), hits: extractGroundingSources(response) };
         }
-      } catch (err) {
-        lastErr = err;
-        console.error('[networkSearch] model fail', model, (err as any)?.message || err);
+      } catch (err: any) {
+        console.error('[networkSearch] grounding', model, err?.message || err);
       }
     }
-
-    if (lastErr) console.error('[networkSearch] all failed', lastErr);
-    return empty;
   } catch (err) {
-    console.error('[networkSearch] fatal', err);
-    return empty;
+    console.error('[networkSearch] gemini', err);
   }
+  return null;
+}
+
+/**
+ * Pipeline completo de rede — sempre tenta APIs públicas; grounding se houver chave.
+ */
+export async function searchTechnicalNetwork(
+  input: SearchInput,
+  apiKey?: string
+): Promise<NetworkSearchResult> {
+  const queries = buildQueries(input);
+  const curated = curatedTechnicalPortals(input.make);
+
+  // 1) Fontes públicas estruturadas (sem chave)
+  let publicBundle;
+  try {
+    publicBundle = await gatherPublicTechnicalData({
+      description: input.description,
+      make: input.make,
+      model: input.model,
+      chassis: input.chassis,
+    });
+  } catch (err) {
+    console.error('[networkSearch] public APIs', err);
+    publicBundle = {
+      summaryLines: ['APIs públicas indisponíveis nesta execução.'],
+      hits: [] as NetworkHit[],
+      sources: [] as string[],
+    };
+  }
+
+  const publicHits: NetworkHit[] = (publicBundle.hits || []).map((h) => ({
+    title: h.title,
+    url: h.url,
+    snippet: h.snippet,
+    kind: h.kind,
+  }));
+
+  const publicBlock = (publicBundle.summaryLines || []).join('\n');
+
+  // 2) Grounding Gemini (opcional)
+  let groundedText = '';
+  let groundedHits: NetworkHit[] = [];
+  let grounded = false;
+  if (apiKey) {
+    const g = await geminiGroundedSummary(input, apiKey, queries, publicBlock);
+    if (g) {
+      groundedText = g.text;
+      groundedHits = g.hits;
+      grounded = true;
+    }
+  }
+
+  const summary = [
+    publicBlock,
+    groundedText ? '\n---\nBusca web:\n' + groundedText : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+
+  const hits = [...publicHits, ...groundedHits, ...curated].slice(0, 18);
+  const sources = Array.from(
+    new Set([
+      ...(publicBundle.sources || []),
+      ...hits.map((h) => (h.url ? `${h.title} — ${h.url}` : h.title)),
+    ])
+  ).slice(0, 16);
+
+  return {
+    summary:
+      summary ||
+      'Use o checklist local. Consulte NHTSA e portais RMI da montadora quando necessário.',
+    sources,
+    hits,
+    queries,
+    grounded,
+  };
 }
 
 export function mergeNetworkIntoDiagnosis(
@@ -288,6 +300,6 @@ export function mergeNetworkIntoDiagnosis(
     networkGrounded: network.grounded,
     originExplanation:
       (diagnosis.originExplanation as string) ||
-      'Cruzamento entre laudo da IA e evidências públicas da rede (quando disponíveis).',
+      'Cruzamento entre laudo da IA e evidências públicas (NHTSA, DTC, rede).',
   };
 }
