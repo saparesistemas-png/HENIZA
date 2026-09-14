@@ -34,6 +34,7 @@ import HenizaAuthModal, { AuthUser } from './components/HenizaAuthModal';
 import AdminAccessModal from './components/AdminAccessModal';
 import InstallMobileModal from './components/InstallMobileModal';
 import { getPendingCount, ADMIN_CREDENTIALS } from './authService';
+import { Analytics } from '@vercel/analytics/react';
 
 import {
   t,
@@ -611,6 +612,7 @@ export default function App() {
         </div>
       </footer>
 
+      <Analytics />
     </div>
   );
 }
