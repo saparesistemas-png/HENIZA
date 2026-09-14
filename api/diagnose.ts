@@ -1,8 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import {
-  searchTechnicalNetwork,
-  mergeNetworkIntoDiagnosis,
-} from './_lib/networkSearch';
 
 export const config = { maxDuration: 60 };
 
@@ -94,7 +90,7 @@ function buildPrompt(p: Payload, networkSummary: string): string {
     '- Modelo: ' + (p.model || 'Geral'),
     '- Relato: "' + (p.description || '') + '"',
     '',
-    'EVIDÊNCIA (NHTSA / DTC / rede):',
+    'EVIDÊNCIA (NHTSA / DTC / OLP / rede):',
     networkSummary || 'Sem evidência nesta execução.',
     '',
     'Retorne SOMENTE JSON com:',
@@ -120,8 +116,7 @@ function localFallback(p: Payload): Record<string, unknown> {
       source: 'OficIA (local)',
       diagnosticNotes:
         '1. Conferir avisos na multimídia.\n2. Medir isolamento HV (> 500 kOhm).\n3. Checar bateria 12V e HVIL.',
-      resetProcedure:
-        '1. Negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
+      resetProcedure: '1. Negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
       correctiveChecklist: [
         'Medir isolamento HV',
         'Verificar desbalanceamento de células',
@@ -130,7 +125,6 @@ function localFallback(p: Payload): Record<string, unknown> {
       ],
       preventiveChecklist: ['Carga AC completa semanal', 'Inspecionar cabos HV'],
       budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
-      suggestedBestPractices: ['Usar luva isolante 1000V (NR-10).'],
     };
   }
 
@@ -161,7 +155,6 @@ function localFallback(p: Payload): Record<string, unknown> {
         { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
         { item: 'Bobina (se necessária)', category: 'Peça', estimatedCost: 250 },
       ],
-      suggestedBestPractices: ['Não apague o código antes de registrar o scanner.'],
     };
   }
 
@@ -181,8 +174,7 @@ function localFallback(p: Payload): Record<string, unknown> {
     source: 'OficIA (local)',
     diagnosticNotes:
       '1. Confirmar o código no scanner.\n2. Verificar bateria e massas.\n3. Inspecionar chicotes e conectores.',
-    resetProcedure:
-      '1. Registrar e apagar códigos.\n2. Teste de rodagem.\n3. Confirmar se retorna.',
+    resetProcedure: '1. Registrar e apagar códigos.\n2. Teste de rodagem.\n3. Confirmar se retorna.',
     correctiveChecklist: [
       'Ler e gravar códigos OBD2',
       'Medir tensão da bateria',
@@ -194,7 +186,6 @@ function localFallback(p: Payload): Record<string, unknown> {
       { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
       { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
     ],
-    suggestedBestPractices: ['Anotar placa, chassi e sintomas com foto.'],
   };
 }
 
@@ -210,10 +201,6 @@ async function callGemini(
 
     if (payload.image && payload.image.indexOf('data:image') === 0) {
       const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
-    }
-    if (payload.audio && payload.audio.indexOf('data:audio') === 0) {
-      const m = payload.audio.match(/^data:(audio\/\w+);base64,(.+)$/);
       if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
     }
 
@@ -261,19 +248,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const payload = validation.payload;
     const apiKey = process.env.GEMINI_API_KEY;
+    const hasOlp = Boolean(process.env.OPEN_LABOR_API_KEY);
 
-    // Sempre: NHTSA + DTC (+ grounding se houver chave)
-    let network = {
+    let network: {
+      summary: string;
+      sources: string[];
+      hits: any[];
+      queries: string[];
+      grounded: boolean;
+      torqueSpecs?: any[];
+      laborTimes?: any[];
+    } = {
       summary: '',
-      sources: [] as string[],
-      hits: [] as any[],
-      queries: [] as string[],
+      sources: [],
+      hits: [],
+      queries: [],
       grounded: false,
     };
 
     try {
+      const netMod = await import('./_lib/networkSearch');
       network = await withTimeout(
-        searchTechnicalNetwork(
+        netMod.searchTechnicalNetwork(
           {
             description: payload.description,
             make: payload.make,
@@ -283,32 +279,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
           apiKey
         ),
-        40_000
+        35_000
       );
-    } catch (err) {
-      console.error('[diagnose] network search', err);
+    } catch (err: any) {
+      console.error('[diagnose] network search', err?.message || err);
+      network.summary =
+        'Busca de rede indisponível nesta execução: ' + String(err?.message || err).slice(0, 120);
+    }
+
+    let mergeNetworkIntoDiagnosis = (d: Record<string, unknown>, n: typeof network) => ({
+      ...d,
+      networkNotes: n.summary,
+      networkSources: n.sources,
+      networkHits: n.hits,
+      networkGrounded: n.grounded,
+      torqueSpecs: n.torqueSpecs,
+      laborTimes: n.laborTimes,
+    });
+
+    try {
+      const netMod = await import('./_lib/networkSearch');
+      if (typeof netMod.mergeNetworkIntoDiagnosis === 'function') {
+        mergeNetworkIntoDiagnosis = netMod.mergeNetworkIntoDiagnosis as any;
+      }
+    } catch {
+      /* keep local merge */
     }
 
     if (apiKey) {
-      const parsed = await callGemini(payload, apiKey, network.summary);
-      if (parsed) {
-        const modelUsed = parsed._model;
-        delete parsed._model;
-        const data = mergeNetworkIntoDiagnosis(
-          Object.assign({}, parsed, { source: 'OficIA / Gemini + fontes públicas' }),
-          network
-        );
-        return res.status(200).json({
-          ok: true,
-          data,
-          meta: {
-            source: 'gemini+network',
-            model: modelUsed,
-            networkGrounded: network.grounded,
-            latencyMs: Date.now() - startedAt,
-            clientId: payload.clientId,
-          },
-        });
+      try {
+        const parsed = await callGemini(payload, apiKey, network.summary);
+        if (parsed) {
+          const modelUsed = parsed._model;
+          delete parsed._model;
+          const data = mergeNetworkIntoDiagnosis(
+            Object.assign({}, parsed, { source: 'OficIA / Gemini + fontes públicas' }),
+            network
+          );
+          return res.status(200).json({
+            ok: true,
+            data,
+            meta: {
+              source: 'gemini+network',
+              model: modelUsed,
+              hasOpenLaborKey: hasOlp,
+              networkGrounded: network.grounded,
+              latencyMs: Date.now() - startedAt,
+              clientId: payload.clientId,
+            },
+          });
+        }
+      } catch (err: any) {
+        console.error('[diagnose] gemini path', err?.message || err);
       }
     }
 
@@ -318,13 +340,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       data,
       meta: {
         source: network.hits?.length ? 'fallback+public' : 'fallback',
+        hasOpenLaborKey: hasOlp,
         networkGrounded: network.grounded,
         latencyMs: Date.now() - startedAt,
         clientId: payload.clientId,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error('[diagnose] fatal', err);
-    return res.status(500).json({ ok: false, error: 'Erro interno no diagnostico.' });
+    return res.status(200).json({
+      ok: true,
+      data: {
+        problemName: 'Diagnóstico local (erro no servidor)',
+        severity: 'Média',
+        diagnosticNotes:
+          'A API encontrou um erro interno e usou modo seguro. Detalhe técnico: ' +
+          String(err?.message || err).slice(0, 200),
+        correctiveChecklist: ['Repetir o diagnóstico', 'Confirmar códigos no scanner'],
+        budgetItems: [{ item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 }],
+        source: 'OficIA (safe mode)',
+      },
+      meta: {
+        source: 'safe-mode',
+        error: String(err?.message || err).slice(0, 200),
+        latencyMs: Date.now() - startedAt,
+      },
+    });
   }
 }
