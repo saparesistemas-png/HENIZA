@@ -1,4 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import {
+  searchTechnicalNetwork,
+  mergeNetworkIntoDiagnosis,
+} from './_lib/networkSearch.js';
 
 export const config = { maxDuration: 60 };
 
@@ -81,7 +85,7 @@ function buildPrompt(p: Payload, networkSummary: string): string {
   return [
     'Você é o consultor técnico da oficina OficIA.',
     'Escreva para o MECÂNICO: português claro, frases curtas e concretas.',
-    'Use a EVIDÊNCIA PÚBLICA/REDE abaixo. Não invente manuais pagos como grátis.',
+    'Use a EVIDÊNCIA PÚBLICA/REDE abaixo.',
     '',
     'VEÍCULO:',
     '- Placa: ' + (p.plate || 'N/I'),
@@ -90,11 +94,11 @@ function buildPrompt(p: Payload, networkSummary: string): string {
     '- Modelo: ' + (p.model || 'Geral'),
     '- Relato: "' + (p.description || '') + '"',
     '',
-    'EVIDÊNCIA (NHTSA / DTC / OLP / rede):',
+    'EVIDÊNCIA:',
     networkSummary || 'Sem evidência nesta execução.',
     '',
     'Retorne SOMENTE JSON com:',
-    'problemName, severity (Alta|Média|Baixa), originBadge curto,',
+    'problemName, severity (Alta|Média|Baixa), originBadge,',
     'diagnosticNotes, resetProcedure, correctiveChecklist[],',
     'preventiveChecklist[], budgetItems[{item,category,estimatedCost}],',
     'codeType, codeTypeLabel, originExplanation, supplierCategory, source.',
@@ -109,21 +113,15 @@ function localFallback(p: Payload): Record<string, unknown> {
       codeType: 'DIAGNOSTICO_EV_ALTA_TENSAO',
       codeTypeLabel: 'Diagnóstico EV',
       originBadge: 'EV / Alta tensão',
-      originExplanation: 'Protocolo para veículo elétrico ou híbrido.',
+      originExplanation: 'Protocolo EV/híbrido.',
       problemName: ((p.make || 'EV') + ' ' + (p.model || '') + ' - verificar alta tensão / BMS').trim(),
       supplierCategory: 'BMS / Alta tensão',
       severity: 'Alta',
       source: 'OficIA (local)',
-      diagnosticNotes:
-        '1. Conferir avisos na multimídia.\n2. Medir isolamento HV (> 500 kOhm).\n3. Checar bateria 12V e HVIL.',
-      resetProcedure: '1. Negativo 12V.\n2. Remover MSD com EPI 1000V.\n3. Aguardar 10 min e religar.',
-      correctiveChecklist: [
-        'Medir isolamento HV',
-        'Verificar desbalanceamento de células',
-        'Testar HVIL',
-        'Validar bateria 12V',
-      ],
-      preventiveChecklist: ['Carga AC completa semanal', 'Inspecionar cabos HV'],
+      diagnosticNotes: '1. Avisos na multimídia.\n2. Isolamento HV.\n3. Bateria 12V e HVIL.',
+      resetProcedure: '1. Negativo 12V.\n2. MSD com EPI.\n3. Aguardar 10 min.',
+      correctiveChecklist: ['Medir isolamento HV', 'Desbalanceamento de células', 'Testar HVIL', 'Bateria 12V'],
+      preventiveChecklist: ['Carga AC semanal'],
       budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
     };
   }
@@ -139,17 +137,17 @@ function localFallback(p: Payload): Record<string, unknown> {
       severity: 'Alta',
       source: 'OficIA (local)',
       diagnosticNotes:
-        'P0300 indica combustão irregular em mais de um cilindro. Causas comuns: bobinas, velas, cabos, bicos, baixa pressão de combustível, admissão com ar falso, compressão baixa.',
+        'P0300: combustão irregular em mais de um cilindro. Causas: bobinas, velas, cabos, bicos, pressão combustível, ar falso, compressão.',
       resetProcedure:
-        '1. Ler códigos e freeze frame.\n2. Testar bobinas e velas.\n3. Medir pressão de combustível e vácuo.\n4. Corrigir, apagar códigos e testar rodagem.',
+        '1. Freeze frame.\n2. Bobinas e velas.\n3. Pressão combustível e vácuo.\n4. Corrigir, apagar, testar.',
       correctiveChecklist: [
         'Confirmar P0300 e P0301–P0304',
-        'Inspecionar velas e bobinas',
-        'Medir pressão da bomba',
-        'Procurar ar falso',
-        'Testar compressão se necessário',
+        'Velas e bobinas',
+        'Pressão da bomba',
+        'Ar falso',
+        'Compressão se necessário',
       ],
-      preventiveChecklist: ['Trocar velas no intervalo', 'Combustível de qualidade'],
+      preventiveChecklist: ['Velas no intervalo', 'Combustível de qualidade'],
       budgetItems: [
         { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 220 },
         { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
@@ -160,28 +158,22 @@ function localFallback(p: Payload): Record<string, unknown> {
 
   const codeMatch = q.match(/\b([pcbu]\d{4})\b/i);
   const problem = codeMatch
-    ? codeMatch[1].toUpperCase() + ' - código relatado no scanner'
+    ? codeMatch[1].toUpperCase() + ' - código relatado'
     : ((p.make || '') + ' ' + (p.model || '') + ' - ' + (p.description || 'análise').slice(0, 60)).trim();
 
   return {
     codeType: 'SCANNER_OBD2',
-    codeTypeLabel: 'Diagnóstico OBD2 / sintoma',
+    codeTypeLabel: 'Diagnóstico OBD2',
     originBadge: 'Laudo de oficina',
-    originExplanation: 'Análise preliminar com base no relato e fontes públicas.',
+    originExplanation: 'Análise preliminar + fontes públicas.',
     problemName: problem,
     supplierCategory: 'Powertrain / Elétrica',
     severity: 'Média',
     source: 'OficIA (local)',
-    diagnosticNotes:
-      '1. Confirmar o código no scanner.\n2. Verificar bateria e massas.\n3. Inspecionar chicotes e conectores.',
-    resetProcedure: '1. Registrar e apagar códigos.\n2. Teste de rodagem.\n3. Confirmar se retorna.',
-    correctiveChecklist: [
-      'Ler e gravar códigos OBD2',
-      'Medir tensão da bateria',
-      'Inspecionar conectores e massas',
-      'Testar componentes do sistema',
-    ],
-    preventiveChecklist: ['Revisões no prazo', 'Peças de qualidade'],
+    diagnosticNotes: '1. Confirmar código.\n2. Bateria e massas.\n3. Chicotes e conectores.',
+    resetProcedure: '1. Registrar e apagar.\n2. Rodagem.\n3. Verificar se retorna.',
+    correctiveChecklist: ['Ler códigos OBD2', 'Tensão da bateria', 'Conectores e massas', 'Testar componentes'],
+    preventiveChecklist: ['Revisões no prazo'],
     budgetItems: [
       { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
       { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
@@ -198,12 +190,10 @@ async function callGemini(
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
     const parts: any[] = [{ text: buildPrompt(payload, networkSummary) }];
-
     if (payload.image && payload.image.indexOf('data:image') === 0) {
       const m = payload.image.match(/^data:(image\/\w+);base64,(.+)$/);
       if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
     }
-
     for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
       try {
         const response: any = await withTimeout(
@@ -223,7 +213,7 @@ async function callGemini(
           if (parsed) return Object.assign({}, parsed, { _model: model });
         }
       } catch (err: any) {
-        console.error('[diagnose] model fail', model, err?.message || err);
+        console.error('[diagnose] model', model, err?.message || err);
       }
     }
   } catch (err: any) {
@@ -239,6 +229,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const startedAt = Date.now();
+  const hasOlp = Boolean(process.env.OPEN_LABOR_API_KEY);
 
   try {
     const validation = parseBody(req.body);
@@ -248,28 +239,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const payload = validation.payload;
     const apiKey = process.env.GEMINI_API_KEY;
-    const hasOlp = Boolean(process.env.OPEN_LABOR_API_KEY);
 
-    let network: {
-      summary: string;
-      sources: string[];
-      hits: any[];
-      queries: string[];
-      grounded: boolean;
-      torqueSpecs?: any[];
-      laborTimes?: any[];
-    } = {
+    let network = {
       summary: '',
-      sources: [],
-      hits: [],
-      queries: [],
+      sources: [] as string[],
+      hits: [] as any[],
+      queries: [] as string[],
       grounded: false,
+      torqueSpecs: undefined as any,
+      laborTimes: undefined as any,
     };
 
     try {
-      const netMod = await import('./_lib/networkSearch');
       network = await withTimeout(
-        netMod.searchTechnicalNetwork(
+        searchTechnicalNetwork(
           {
             description: payload.description,
             make: payload.make,
@@ -279,58 +262,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
           apiKey
         ),
-        35_000
+        40_000
       );
     } catch (err: any) {
-      console.error('[diagnose] network search', err?.message || err);
-      network.summary =
-        'Busca de rede indisponível nesta execução: ' + String(err?.message || err).slice(0, 120);
-    }
-
-    let mergeNetworkIntoDiagnosis = (d: Record<string, unknown>, n: typeof network) => ({
-      ...d,
-      networkNotes: n.summary,
-      networkSources: n.sources,
-      networkHits: n.hits,
-      networkGrounded: n.grounded,
-      torqueSpecs: n.torqueSpecs,
-      laborTimes: n.laborTimes,
-    });
-
-    try {
-      const netMod = await import('./_lib/networkSearch');
-      if (typeof netMod.mergeNetworkIntoDiagnosis === 'function') {
-        mergeNetworkIntoDiagnosis = netMod.mergeNetworkIntoDiagnosis as any;
-      }
-    } catch {
-      /* keep local merge */
+      console.error('[diagnose] network', err?.message || err);
+      network.summary = 'Rede indisponível: ' + String(err?.message || err).slice(0, 150);
     }
 
     if (apiKey) {
-      try {
-        const parsed = await callGemini(payload, apiKey, network.summary);
-        if (parsed) {
-          const modelUsed = parsed._model;
-          delete parsed._model;
-          const data = mergeNetworkIntoDiagnosis(
-            Object.assign({}, parsed, { source: 'OficIA / Gemini + fontes públicas' }),
-            network
-          );
-          return res.status(200).json({
-            ok: true,
-            data,
-            meta: {
-              source: 'gemini+network',
-              model: modelUsed,
-              hasOpenLaborKey: hasOlp,
-              networkGrounded: network.grounded,
-              latencyMs: Date.now() - startedAt,
-              clientId: payload.clientId,
-            },
-          });
-        }
-      } catch (err: any) {
-        console.error('[diagnose] gemini path', err?.message || err);
+      const parsed = await callGemini(payload, apiKey, network.summary);
+      if (parsed) {
+        const modelUsed = parsed._model;
+        delete parsed._model;
+        const data = mergeNetworkIntoDiagnosis(
+          Object.assign({}, parsed, { source: 'OficIA / Gemini + fontes públicas' }),
+          network
+        );
+        return res.status(200).json({
+          ok: true,
+          data,
+          meta: {
+            source: 'gemini+network',
+            model: modelUsed,
+            hasOpenLaborKey: hasOlp,
+            networkGrounded: network.grounded,
+            latencyMs: Date.now() - startedAt,
+          },
+        });
       }
     }
 
@@ -343,7 +301,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         hasOpenLaborKey: hasOlp,
         networkGrounded: network.grounded,
         latencyMs: Date.now() - startedAt,
-        clientId: payload.clientId,
       },
     });
   } catch (err: any) {
@@ -351,17 +308,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       ok: true,
       data: {
-        problemName: 'Diagnóstico local (erro no servidor)',
+        problemName: 'Diagnóstico local (safe mode)',
         severity: 'Média',
-        diagnosticNotes:
-          'A API encontrou um erro interno e usou modo seguro. Detalhe técnico: ' +
-          String(err?.message || err).slice(0, 200),
-        correctiveChecklist: ['Repetir o diagnóstico', 'Confirmar códigos no scanner'],
+        diagnosticNotes: 'Erro interno: ' + String(err?.message || err).slice(0, 200),
+        correctiveChecklist: ['Repetir diagnóstico', 'Confirmar no scanner'],
         budgetItems: [{ item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 }],
-        source: 'OficIA (safe mode)',
+        source: 'OficIA (safe)',
       },
       meta: {
         source: 'safe-mode',
+        hasOpenLaborKey: hasOlp,
         error: String(err?.message || err).slice(0, 200),
         latencyMs: Date.now() - startedAt,
       },
