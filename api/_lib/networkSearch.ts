@@ -1,8 +1,5 @@
 /**
  * Busca técnica na rede pública para o OficIA.
- * 1) NHTSA + DTC + OLP torque/labor (se chave)
- * 2) Portais RMI curados
- * 3) Gemini grounding (opcional)
  */
 
 import { gatherPublicTechnicalData } from './publicTechnicalApis.js';
@@ -30,6 +27,12 @@ export type NetworkSearchResult = {
     notes?: string;
   }>;
   laborTimes?: Array<{ job: string; hours?: number; notes?: string }>;
+  temperature?: {
+    sensors: string[];
+    checks: string[];
+    severity: string;
+    problemName: string;
+  };
 };
 
 type SearchInput = {
@@ -53,9 +56,8 @@ function buildQueries(input: SearchInput): string[] {
   const base = [make, model, code || desc.slice(0, 80)].filter(Boolean).join(' ');
   return [
     `${base} diagnostic repair procedure`,
-    `${base} TSB technical service bulletin`,
+    `${base} temperature sensor ECT IAT diagnosis`,
     `${code || base} site:youtube.com diagnosis`,
-    `${base} torque specs workshop`,
   ].filter(Boolean);
 }
 
@@ -69,33 +71,17 @@ export function curatedTechnicalPortals(make?: string): NetworkHit[] {
       kind: 'tsb',
     },
     {
-      title: 'Open Labor Project — DTC / torque / labor',
-      url: 'https://openlaborproject.com/docs/api',
-      snippet: 'Requer OPEN_LABOR_API_KEY na Vercel.',
+      title: 'OficIA OBD + sensores temperatura',
+      url: 'https://heniza.vercel.app/api/obd?sensors=temp',
+      snippet: 'ECT, IAT, óleo, TFT, CAT, EV pack.',
       kind: 'web',
     },
   ];
   if (/volkswagen|vw|audi|seat|skoda|cupra/.test(m)) {
     hits.push({
-      title: 'VW Group erWin (RMI — licença)',
+      title: 'VW Group erWin (RMI)',
       url: 'https://erwin.vwgroup-datahub.com',
       snippet: 'Portal oficial RMI Europa.',
-      kind: 'oem',
-    });
-  }
-  if (/bmw|mini/.test(m)) {
-    hits.push({
-      title: 'BMW AOS (RMI)',
-      url: 'https://aos.bmwgroup.com',
-      snippet: 'Informação oficial BMW.',
-      kind: 'oem',
-    });
-  }
-  if (/toyota|lexus/.test(m)) {
-    hits.push({
-      title: 'Toyota Tech Europe',
-      url: 'https://www.toyota-tech.eu',
-      snippet: 'Portal técnico Toyota EU.',
       kind: 'oem',
     });
   }
@@ -139,7 +125,7 @@ async function geminiGroundedSummary(
     const ai = new GoogleGenAI({ apiKey });
     const prompt = [
       'Pesquisador técnico automotivo. Resuma em PT-BR (máx. 8 frases).',
-      'Use a evidência pública. Não invente torque sem fonte.',
+      'Use a evidência. Inclua dicas de sensores de temperatura se relevante.',
       '',
       'EVIDÊNCIA:',
       publicBlock,
@@ -188,11 +174,7 @@ export async function searchTechnicalNetwork(
     });
   } catch (err) {
     console.error('[networkSearch] public', err);
-    publicBundle = {
-      summaryLines: ['APIs públicas indisponíveis.'],
-      hits: [],
-      sources: [],
-    };
+    publicBundle = { summaryLines: ['APIs públicas indisponíveis.'], hits: [], sources: [] };
   }
 
   const publicHits: NetworkHit[] = (publicBundle.hits || []).map((h) => ({
@@ -230,15 +212,14 @@ export async function searchTechnicalNetwork(
   ).slice(0, 18);
 
   return {
-    summary:
-      summary ||
-      'Sem evidência de rede. Configure OPEN_LABOR_API_KEY para torque e tempos OLP.',
+    summary: summary || 'Sem evidência de rede.',
     sources,
     hits,
     queries,
     grounded,
     torqueSpecs: publicBundle.torqueSpecs,
     laborTimes: publicBundle.laborTimes,
+    temperature: publicBundle.temperature,
   };
 }
 
@@ -255,22 +236,31 @@ export function mergeNetworkIntoDiagnosis(
     networkGrounded: network.grounded,
     originExplanation:
       (diagnosis.originExplanation as string) ||
-      'Cruzamento IA + fontes públicas (NHTSA, DTC, OLP torque/labor).',
+      'Cruzamento IA + OBD + sensores de temperatura + fontes públicas.',
   };
 
-  if (network.torqueSpecs?.length) {
-    out.torqueSpecs = network.torqueSpecs;
-  }
+  if (network.torqueSpecs?.length) out.torqueSpecs = network.torqueSpecs;
   if (network.laborTimes?.length) {
     out.laborTimes = network.laborTimes;
     const existing = (diagnosis.budgetItems as any[]) || [];
     if (existing.length <= 2) {
-      const laborItems = network.laborTimes.slice(0, 3).map((l) => ({
-        item: l.job,
-        category: 'Mão de Obra',
-        estimatedCost: Math.round((l.hours || 1) * 180),
-      }));
-      out.budgetItems = [...laborItems, ...existing].slice(0, 6);
+      out.budgetItems = [
+        ...network.laborTimes.slice(0, 3).map((l) => ({
+          item: l.job,
+          category: 'Mão de Obra',
+          estimatedCost: Math.round((l.hours || 1) * 180),
+        })),
+        ...existing,
+      ].slice(0, 6);
+    }
+  }
+  if (network.temperature) {
+    out.temperature = network.temperature;
+    if (
+      (!diagnosis.correctiveChecklist || (diagnosis.correctiveChecklist as any[]).length < 3) &&
+      network.temperature.checks?.length
+    ) {
+      out.correctiveChecklist = network.temperature.checks.slice(0, 8);
     }
   }
 
