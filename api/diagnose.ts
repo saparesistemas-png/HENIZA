@@ -3,6 +3,12 @@ import {
   searchTechnicalNetwork,
   mergeNetworkIntoDiagnosis,
 } from './_lib/networkSearch.js';
+import {
+  evaluateFaultsSnapshot,
+  formatFaultsForPrompt,
+  faultHints,
+  type FaultEvent,
+} from './_lib/faultEngine.js';
 
 export const config = { maxDuration: 60 };
 
@@ -89,6 +95,13 @@ function liveObdHints(list?: LiveObdReading[]): string[] {
   return hints;
 }
 
+function faultsFromLive(list?: LiveObdReading[]): FaultEvent[] {
+  if (!list?.length) return [];
+  return evaluateFaultsSnapshot(
+    list.map((r) => ({ id: r.id, value: r.value, unit: r.unit, ok: r.ok }))
+  );
+}
+
 function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false; message: string } {
   if (!body || typeof body !== 'object') return { ok: false, message: 'Body invalido.' };
   const b = body as Record<string, unknown>;
@@ -133,11 +146,11 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
 }
 
 function buildPrompt(p: Payload, networkSummary: string): string {
+  const faults = faultsFromLive(p.liveObd);
   return [
     'Você é o consultor técnico da oficina OficIA.',
     'Escreva para o MECÂNICO: português claro, frases curtas e concretas.',
-    'Use a EVIDÊNCIA e os DADOS OBD AO VIVO quando existirem (ECT, IAT, RPM, STFT, tensão).',
-    'Não invente valores de PID que não foram informados.',
+    'Use DADOS OBD e EVENTOS do faultEngine. Não invente PIDs.',
     '',
     'VEÍCULO:',
     '- Placa: ' + (p.plate || 'N/I'),
@@ -146,6 +159,7 @@ function buildPrompt(p: Payload, networkSummary: string): string {
     '- Modelo: ' + (p.model || 'Geral'),
     '- Relato: "' + (p.description || '') + '"',
     formatLiveObd(p.liveObd) || '- OBD ao vivo: não informado',
+    formatFaultsForPrompt(faults) || '- faultEngine: sem eventos',
     '',
     'EVIDÊNCIA DA REDE/OBD:',
     networkSummary || 'Sem evidência nesta execução.',
@@ -162,6 +176,9 @@ function localFallback(p: Payload): Record<string, unknown> {
   const q = ((p.description || '') + ' ' + (p.make || '') + ' ' + (p.model || '')).toLowerCase();
   const liveHints = liveObdHints(p.liveObd);
   const liveBlock = formatLiveObd(p.liveObd);
+  const faultEvents = faultsFromLive(p.liveObd);
+  const fHints = faultHints(faultEvents);
+  const faultBlock = formatFaultsForPrompt(faultEvents);
 
   if (/byd|dolphin|gwm|ora|eletr|bateria|isolamento|doip|hvil/.test(q) || p.isEvAlternative) {
     return {
@@ -175,11 +192,13 @@ function localFallback(p: Payload): Record<string, unknown> {
       source: 'OficIA (local)',
       diagnosticNotes:
         (liveBlock ? liveBlock + '\n\n' : '') +
+        (faultBlock ? faultBlock + '\n\n' : '') +
         '1. Avisos na multimídia.\n2. Isolamento HV.\n3. Bateria 12V e HVIL.',
       resetProcedure: '1. Negativo 12V.\n2. MSD com EPI.\n3. Aguardar 10 min.',
       correctiveChecklist: ['Medir isolamento HV', 'Desbalanceamento de células', 'Testar HVIL', 'Bateria 12V'],
       preventiveChecklist: ['Carga AC semanal'],
       budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
+      faultEvents,
     };
   }
 
@@ -195,60 +214,66 @@ function localFallback(p: Payload): Record<string, unknown> {
       source: 'OficIA (local)',
       diagnosticNotes:
         (liveBlock ? liveBlock + '\n\n' : '') +
-        'P0300: combustão irregular em mais de um cilindro. Causas: bobinas, velas, cabos, bicos, pressão combustível, ar falso, compressão.' +
+        (faultBlock ? faultBlock + '\n\n' : '') +
+        'P0300: combustão irregular. Causas: bobinas, velas, cabos, bicos, pressão, ar falso, compressão.' +
         (liveHints.length ? '\n' + liveHints.join('\n') : ''),
-      resetProcedure:
-        '1. Freeze frame.\n2. Bobinas e velas.\n3. Pressão combustível e vácuo.\n4. Corrigir, apagar, testar.',
+      resetProcedure: '1. Freeze frame.\n2. Bobinas e velas.\n3. Pressão e vácuo.\n4. Corrigir, apagar, testar.',
       correctiveChecklist: [
+        ...fHints,
         'Confirmar P0300 e P0301–P0304',
         'Velas e bobinas',
         'Pressão da bomba',
         'Ar falso',
-        'Compressão se necessário',
-      ],
-      preventiveChecklist: ['Velas no intervalo', 'Combustível de qualidade'],
+      ].slice(0, 10),
+      preventiveChecklist: ['Velas no intervalo'],
       budgetItems: [
         { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 220 },
         { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
-        { item: 'Bobina (se necessária)', category: 'Peça', estimatedCost: 250 },
       ],
+      faultEvents,
     };
   }
 
   const codeMatch = q.match(/\b([pcbu]\d{4})\b/i);
+  const topFault = faultEvents[0];
   const problem = codeMatch
     ? codeMatch[1].toUpperCase() + ' - código relatado'
-    : liveHints[0] ||
-      ((p.make || '') + ' ' + (p.model || '') + ' - ' + (p.description || 'análise OBD').slice(0, 60)).trim();
+    : topFault
+      ? topFault.title + ' (' + topFault.id + ')'
+      : liveHints[0] ||
+        ((p.make || '') + ' ' + (p.model || '') + ' - ' + (p.description || 'análise OBD').slice(0, 60)).trim();
 
   return {
     codeType: 'SCANNER_OBD2',
     codeTypeLabel: 'Diagnóstico OBD2',
-    originBadge: liveBlock ? 'OBD ao vivo + laudo' : 'Laudo de oficina',
-    originExplanation: liveBlock
-      ? 'Análise com dados OBD em tempo real e fontes públicas.'
-      : 'Análise preliminar + fontes públicas.',
+    originBadge: faultEvents.length ? 'faultEngine + OBD' : liveBlock ? 'OBD ao vivo' : 'Laudo de oficina',
+    originExplanation: 'Regras + PIDs + fontes públicas.',
     problemName: problem,
     supplierCategory: 'Powertrain / Elétrica',
-    severity: liveHints.some((h) => /superaquec|tensão baixa/i.test(h)) ? 'Alta' : 'Média',
+    severity:
+      faultEvents.some((e) => e.severity === 'high') || liveHints.some((h) => /superaquec|tensão baixa/i.test(h))
+        ? 'Alta'
+        : 'Média',
     source: 'OficIA (local)',
     diagnosticNotes:
       (liveBlock ? liveBlock + '\n\n' : '') +
+      (faultBlock ? faultBlock + '\n\n' : '') +
       (liveHints.length ? liveHints.join('\n') + '\n\n' : '') +
       '1. Confirmar código.\n2. Bateria e massas.\n3. Chicotes e conectores.',
     resetProcedure: '1. Registrar e apagar.\n2. Rodagem.\n3. Verificar se retorna.',
     correctiveChecklist: [
-      ...(liveHints.length ? liveHints : []),
+      ...fHints,
+      ...liveHints,
       'Ler códigos OBD2',
       'Tensão da bateria',
       'Conectores e massas',
-      'Testar componentes',
-    ].slice(0, 8),
+    ].slice(0, 10),
     preventiveChecklist: ['Revisões no prazo'],
     budgetItems: [
       { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
       { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
     ],
+    faultEvents,
   };
 }
 
@@ -310,6 +335,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const payload = validation.payload;
     const apiKey = process.env.GEMINI_API_KEY;
+    const faultEvents = faultsFromLive(payload.liveObd);
 
     let network = {
       summary: '',
@@ -326,7 +352,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       network = await withTimeout(
         searchTechnicalNetwork(
           {
-            description: [payload.description, formatLiveObd(payload.liveObd)]
+            description: [
+              payload.description,
+              formatLiveObd(payload.liveObd),
+              formatFaultsForPrompt(faultEvents),
+            ]
               .filter(Boolean)
               .join('\n'),
             make: payload.make,
@@ -350,8 +380,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         delete parsed._model;
         const data = mergeNetworkIntoDiagnosis(
           Object.assign({}, parsed, {
-            source: 'OficIA / Gemini + OBD ao vivo + fontes públicas',
+            source: 'OficIA / Gemini + faultEngine + OBD',
             liveObd: payload.liveObd,
+            faultEvents,
           }),
           network
         );
@@ -363,6 +394,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             model: modelUsed,
             hasOpenLaborKey: hasOlp,
             liveObdCount: payload.liveObd?.length || 0,
+            faultCount: faultEvents.length,
             networkGrounded: network.grounded,
             latencyMs: Date.now() - startedAt,
           },
@@ -371,7 +403,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = mergeNetworkIntoDiagnosis(
-      Object.assign({}, localFallback(payload), { liveObd: payload.liveObd }),
+      Object.assign({}, localFallback(payload), {
+        liveObd: payload.liveObd,
+        faultEvents,
+      }),
       network
     );
     return res.status(200).json({
@@ -381,6 +416,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         source: network.hits?.length ? 'fallback+public' : 'fallback',
         hasOpenLaborKey: hasOlp,
         liveObdCount: payload.liveObd?.length || 0,
+        faultCount: faultEvents.length,
         networkGrounded: network.grounded,
         latencyMs: Date.now() - startedAt,
       },
