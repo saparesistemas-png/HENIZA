@@ -9,6 +9,10 @@ import {
   faultHints,
   type FaultEvent,
 } from './_lib/faultEngine.js';
+import {
+  buildPreventivePlan,
+  formatPreventiveForPrompt,
+} from './_lib/preventiveMaintenance.js';
 
 export const config = { maxDuration: 60 };
 
@@ -35,6 +39,7 @@ type Payload = {
   isEvAlternative?: boolean;
   clientId?: string;
   liveObd?: LiveObdReading[];
+  odometerKm?: number;
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -102,6 +107,43 @@ function faultsFromLive(list?: LiveObdReading[]): FaultEvent[] {
   );
 }
 
+function attachPreventive(p: Payload, data: Record<string, unknown>): Record<string, unknown> {
+  const plan = buildPreventivePlan({
+    make: p.make,
+    model: p.model,
+    description: p.description,
+    isEv: p.isEvAlternative,
+    odometerKm: p.odometerKm,
+  });
+  const prevList = plan.checklist.slice(0, 8);
+  const existingPrev = (data.preventiveChecklist as string[]) || [];
+  const existingBudget = (data.budgetItems as any[]) || [];
+  return {
+    ...data,
+    preventiveChecklist: Array.from(new Set([...prevList, ...existingPrev])).slice(0, 12),
+    preventivePlan: {
+      vehicleLabel: plan.vehicleLabel,
+      items: plan.items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        category: i.category,
+        intervalKm: i.intervalKm,
+        intervalMonths: i.intervalMonths,
+        priority: i.priority,
+        dueReason: i.dueReason,
+        estimatedCostBrl: i.estimatedCostBrl,
+      })),
+      disclaimer: plan.disclaimer,
+    },
+    budgetItems: [
+      ...existingBudget,
+      ...plan.budgetHints
+        .filter((b) => !existingBudget.some((e) => e.item === b.item))
+        .slice(0, 4),
+    ].slice(0, 10),
+  };
+}
+
 function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false; message: string } {
   if (!body || typeof body !== 'object') return { ok: false, message: 'Body invalido.' };
   const b = body as Record<string, unknown>;
@@ -141,25 +183,38 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
       isEvAlternative: Boolean(b.isEvAlternative),
       clientId: b.clientId ? String(b.clientId) : undefined,
       liveObd,
+      odometerKm:
+        b.odometerKm != null && b.odometerKm !== ''
+          ? Number(b.odometerKm)
+          : undefined,
     },
   };
 }
 
 function buildPrompt(p: Payload, networkSummary: string): string {
   const faults = faultsFromLive(p.liveObd);
+  const prev = buildPreventivePlan({
+    make: p.make,
+    model: p.model,
+    description: p.description,
+    isEv: p.isEvAlternative,
+    odometerKm: p.odometerKm,
+  });
   return [
     'Você é o consultor técnico da oficina OficIA.',
     'Escreva para o MECÂNICO: português claro, frases curtas e concretas.',
-    'Use DADOS OBD e EVENTOS do faultEngine. Não invente PIDs.',
+    'Use OBD, faultEngine e manutenção preventiva. Não invente PIDs.',
     '',
     'VEÍCULO:',
     '- Placa: ' + (p.plate || 'N/I'),
     '- Chassi: ' + (p.chassis || 'N/I'),
     '- Marca: ' + (p.make || 'Geral'),
     '- Modelo: ' + (p.model || 'Geral'),
+    '- Odômetro: ' + (p.odometerKm != null ? p.odometerKm + ' km' : 'N/I'),
     '- Relato: "' + (p.description || '') + '"',
     formatLiveObd(p.liveObd) || '- OBD ao vivo: não informado',
     formatFaultsForPrompt(faults) || '- faultEngine: sem eventos',
+    formatPreventiveForPrompt(prev),
     '',
     'EVIDÊNCIA DA REDE/OBD:',
     networkSummary || 'Sem evidência nesta execução.',
@@ -196,7 +251,7 @@ function localFallback(p: Payload): Record<string, unknown> {
         '1. Avisos na multimídia.\n2. Isolamento HV.\n3. Bateria 12V e HVIL.',
       resetProcedure: '1. Negativo 12V.\n2. MSD com EPI.\n3. Aguardar 10 min.',
       correctiveChecklist: ['Medir isolamento HV', 'Desbalanceamento de células', 'Testar HVIL', 'Bateria 12V'],
-      preventiveChecklist: ['Carga AC semanal'],
+      preventiveChecklist: ['Carga AC semanal', 'Filtro de cabine no prazo'],
       budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
       faultEvents,
     };
@@ -225,7 +280,7 @@ function localFallback(p: Payload): Record<string, unknown> {
         'Pressão da bomba',
         'Ar falso',
       ].slice(0, 10),
-      preventiveChecklist: ['Velas no intervalo'],
+      preventiveChecklist: ['Velas no intervalo', 'Filtro de ar no prazo'],
       budgetItems: [
         { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 220 },
         { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
@@ -247,7 +302,7 @@ function localFallback(p: Payload): Record<string, unknown> {
     codeType: 'SCANNER_OBD2',
     codeTypeLabel: 'Diagnóstico OBD2',
     originBadge: faultEvents.length ? 'faultEngine + OBD' : liveBlock ? 'OBD ao vivo' : 'Laudo de oficina',
-    originExplanation: 'Regras + PIDs + fontes públicas.',
+    originExplanation: 'Regras + PIDs + preventiva + fontes públicas.',
     problemName: problem,
     supplierCategory: 'Powertrain / Elétrica',
     severity:
@@ -268,7 +323,7 @@ function localFallback(p: Payload): Record<string, unknown> {
       'Tensão da bateria',
       'Conectores e massas',
     ].slice(0, 10),
-    preventiveChecklist: ['Revisões no prazo'],
+    preventiveChecklist: ['Revisões no prazo', 'Óleo e filtros conforme uso'],
     budgetItems: [
       { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
       { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
@@ -379,11 +434,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const modelUsed = parsed._model;
         delete parsed._model;
         const data = mergeNetworkIntoDiagnosis(
-          Object.assign({}, parsed, {
-            source: 'OficIA / Gemini + faultEngine + OBD',
-            liveObd: payload.liveObd,
-            faultEvents,
-          }),
+          attachPreventive(
+            payload,
+            Object.assign({}, parsed, {
+              source: 'OficIA / Gemini + faultEngine + OBD + preventiva',
+              liveObd: payload.liveObd,
+              faultEvents,
+            })
+          ),
           network
         );
         return res.status(200).json({
@@ -403,10 +461,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = mergeNetworkIntoDiagnosis(
-      Object.assign({}, localFallback(payload), {
-        liveObd: payload.liveObd,
-        faultEvents,
-      }),
+      attachPreventive(
+        payload,
+        Object.assign({}, localFallback(payload), {
+          liveObd: payload.liveObd,
+          faultEvents,
+        })
+      ),
       network
     );
     return res.status(200).json({
