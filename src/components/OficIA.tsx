@@ -7,6 +7,7 @@ import { BRAZIL_AUTOMAKERS, decodeVinDetails } from '../automakersData';
 import MultimodalMediaCapture from './MultimodalMediaCapture';
 import DiagnosisResultFlow from './DiagnosisResultFlow';
 import ObdLivePanel from './ObdLivePanel';
+import SystemUpdateModule from './SystemUpdateModule';
 import { getObdLiveSession, PID_DEFS } from '../services/obdLive';
 
 interface OficIAProps {
@@ -205,7 +206,9 @@ export default function OficIA({
             <h2 className="text-lg font-black text-white">
               Ofic<span className="text-tech-destaque">IA</span>
             </h2>
-            <p className="text-xs text-slate-400">Diagnóstico + preventiva para validação do profissional</p>
+            <p className="text-xs text-slate-400">
+              Diagnóstico + preventiva + atualização de sistemas
+            </p>
           </div>
         </div>
       </div>
@@ -279,10 +282,17 @@ export default function OficIA({
             value={symptomQuery}
             onChange={(e) => setSymptomQuery(e.target.value)}
             rows={3}
-            placeholder="Ex.: P0300, motor falhando… ou 85000 km, última troca de óleo há 12 meses"
+            placeholder="Ex.: P0300, motor falhando… ou atualização de software após troca de bateria"
             className="w-full rounded-lg bg-tech-fundo border border-tech-borda px-3 py-2 text-sm text-white"
           />
         </label>
+
+        <SystemUpdateModule
+          setSuccessToast={setSuccessToast}
+          onInjectSymptom={(text) =>
+            setSymptomQuery((prev) => (prev ? prev + '\n' + text : text))
+          }
+        />
 
         <ObdLivePanel
           setSuccessToast={setSuccessToast}
