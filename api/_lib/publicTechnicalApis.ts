@@ -1,11 +1,15 @@
 /**
  * Fontes técnicas públicas / opcionais para o OficIA.
- * - Banco OBD (local + Codigos-ptbr ~2900)
- * - NHTSA: recalls, complaints, VIN
- * - Open Labor Project (OPEN_LABOR_API_KEY): dtc, torque, labor
+ * - Banco OBD + sensores de temperatura
+ * - NHTSA + Open Labor (opcional)
  */
 
 import { lookupObdCode, extractObdCodes } from './obdDatabase.js';
+import {
+  diagnoseTemperature,
+  temperatureHitsFromDiagnosis,
+  TEMP_DTC,
+} from './temperatureSensors.js';
 
 export type PublicHit = {
   title: string;
@@ -38,6 +42,12 @@ export type PublicTechnicalBundle = {
   dtc?: { code: string; title: string; meaning: string; checks: string[] };
   torqueSpecs?: TorqueSpecRow[];
   laborTimes?: LaborTimeRow[];
+  temperature?: {
+    sensors: string[];
+    checks: string[];
+    severity: string;
+    problemName: string;
+  };
 };
 
 function extractYear(text: string): string | undefined {
@@ -51,9 +61,8 @@ function inferJobSlug(description: string, code?: string | null): string | undef
   if (/vela|spark|bobina|misfire|falha de combust/.test(q)) return 'spark-plugs';
   if (/pastilha|freio|brake/.test(q)) return 'brake-pads-front';
   if (/óleo|oil change|troca de oleo|troca de óleo/.test(q)) return 'oil-change';
-  if (/correi|timing belt|correia dentada/.test(q)) return 'timing-belt';
+  if (/termostato|arrefec|radiador|superaquec/.test(q)) return 'thermostat';
   if (/bateria|battery/.test(q)) return 'battery-replacement';
-  if (/filtro de ar|air filter/.test(q)) return 'air-filter';
   return undefined;
 }
 
@@ -90,20 +99,16 @@ async function olpFetch(pathAndQuery: string): Promise<any | null> {
       },
     });
     clearTimeout(t);
-    if (!res.ok) {
-      console.warn('[OLP]', pathAndQuery, res.status);
-      return null;
-    }
+    if (!res.ok) return null;
     return await res.json();
-  } catch (err) {
-    console.warn('[OLP] fail', pathAndQuery, err);
+  } catch {
     return null;
   } finally {
     clearTimeout(t);
   }
 }
 
-export async function decodeVinNhtsa(vin: string): Promise<PublicTechnicalBundle['vinDecoded'] | null> {
+export async function decodeVinNhtsa(vin: string) {
   const clean = vin.replace(/\s/g, '').toUpperCase();
   if (clean.length < 11) return null;
   const data = await fetchJson(
@@ -126,8 +131,7 @@ export async function fetchNhtsaRecalls(make: string, model: string, year?: stri
     `https://api.nhtsa.gov/recalls/recallsByVehicle?make=${encodeURIComponent(make)}` +
     `&model=${encodeURIComponent(model)}&modelYear=${encodeURIComponent(y)}`;
   const data = await fetchJson(url);
-  const results = data?.results || [];
-  return results.slice(0, 5).map((r: any) => ({
+  return (data?.results || []).slice(0, 5).map((r: any) => ({
     title: `Recall NHTSA ${r.NHTSACampaignNumber || ''} — ${r.Component || 'componente'}`,
     url: r.NHTSACampaignNumber
       ? `https://www.nhtsa.gov/recalls?nhtsaId=${r.NHTSACampaignNumber}`
@@ -161,9 +165,7 @@ export async function fetchOpenLaborDtc(code: string): Promise<PublicHit | null>
   return {
     title: `OLP ${code}: ${(row as any).title || (row as any).description || 'DTC'}`,
     url: 'https://openlaborproject.com/eu/dtc-codes/',
-    snippet: String(
-      (row as any).description || (row as any).summary || (row as any).meaning || ''
-    ).slice(0, 300),
+    snippet: String((row as any).description || (row as any).summary || '').slice(0, 300),
     kind: 'dtc',
   };
 }
@@ -220,11 +222,7 @@ export async function fetchOpenLaborLaborTimes(input: {
   const data = await olpFetch(`/api/v1/labor-times?${qs.toString()}`);
   if (!data) return { rows: [], hits: [] };
   const list: any[] =
-    data?.data?.laborTimes ||
-    data?.data?.jobs ||
-    data?.laborTimes ||
-    data?.data ||
-    (Array.isArray(data) ? data : []);
+    data?.data?.laborTimes || data?.data?.jobs || data?.laborTimes || data?.data || (Array.isArray(data) ? data : []);
   if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
   const rows: LaborTimeRow[] = list.slice(0, 10).map((j: any) => ({
     job: j.job || j.name || j.description || 'Serviço',
@@ -234,7 +232,7 @@ export async function fetchOpenLaborLaborTimes(input: {
   const hits: PublicHit[] = rows.slice(0, 5).map((j) => ({
     title: `Mão de obra OLP: ${j.job}${j.hours != null ? ` — ${j.hours} h` : ''}`,
     url: 'https://openlaborproject.com/docs/api',
-    snippet: j.notes || 'Tempo de referência OLP',
+    snippet: j.notes || 'Tempo OLP',
     kind: 'labor' as const,
   }));
   return { rows, hits };
@@ -260,6 +258,7 @@ export async function gatherPublicTechnicalData(input: {
   let dtc: PublicTechnicalBundle['dtc'];
   let torqueSpecs: TorqueSpecRow[] | undefined;
   let laborTimes: LaborTimeRow[] | undefined;
+  let temperature: PublicTechnicalBundle['temperature'];
 
   if (input.chassis && input.chassis.replace(/\s/g, '').length >= 11) {
     vinDecoded = (await decodeVinNhtsa(input.chassis)) || undefined;
@@ -268,10 +267,10 @@ export async function gatherPublicTechnicalData(input: {
       model = model || vinDecoded.model || model;
       year = year || vinDecoded.year;
       summaryLines.push(
-        `VIN (NHTSA vPIC): ${vinDecoded.make || ''} ${vinDecoded.model || ''} ${vinDecoded.year || ''}`.trim()
+        `VIN: ${vinDecoded.make || ''} ${vinDecoded.model || ''} ${vinDecoded.year || ''}`.trim()
       );
       hits.push({
-        title: 'Decode VIN — NHTSA vPIC',
+        title: 'Decode VIN — NHTSA',
         url: 'https://vpic.nhtsa.dot.gov/',
         snippet: `${vinDecoded.make} ${vinDecoded.model} ${vinDecoded.year}`,
         kind: 'vin',
@@ -280,7 +279,35 @@ export async function gatherPublicTechnicalData(input: {
     }
   }
 
-  // Banco OBD (local + PT ~2900)
+  // Sensores de temperatura (ECT/IAT/óleo/TFT/CAT/EV)
+  const tempDiag = diagnoseTemperature(desc);
+  if (tempDiag) {
+    temperature = {
+      sensors: tempDiag.matchedSensors.map((s) => s.id),
+      checks: tempDiag.checks,
+      severity: tempDiag.severity,
+      problemName: tempDiag.problemName,
+    };
+    summaryLines.push(...tempDiag.summaryLines.slice(0, 6));
+    hits.push(
+      ...temperatureHitsFromDiagnosis(tempDiag).map((h) => ({
+        title: h.title,
+        snippet: h.snippet,
+        kind: 'dtc' as const,
+      }))
+    );
+    sources.push('OficIA — sensores de temperatura');
+    if (!dtc && tempDiag.codes[0] && TEMP_DTC[tempDiag.codes[0]]) {
+      const t = TEMP_DTC[tempDiag.codes[0]];
+      dtc = {
+        code: tempDiag.codes[0],
+        title: t.title,
+        meaning: t.meaning,
+        checks: tempDiag.checks.slice(0, 6),
+      };
+    }
+  }
+
   for (const c of codes.slice(0, 5)) {
     const entry = await lookupObdCode(c);
     if (!entry) continue;
@@ -292,18 +319,18 @@ export async function gatherPublicTechnicalData(input: {
         checks: entry.checks,
       };
     }
-    summaryLines.push(`DTC ${entry.code} [${entry.source}]: ${entry.title}. ${entry.meaning}`);
+    summaryLines.push(`DTC ${entry.code} [${entry.source}]: ${entry.title}`);
     hits.push({
       title: `DTC ${entry.code} — ${entry.title}`,
-      snippet: `${entry.meaning} | Família: ${entry.family || 'OBD'} | Verificações: ${entry.checks.join('; ')}`,
+      snippet: `${entry.meaning} | ${entry.checks.join('; ')}`,
       kind: 'dtc',
       url: 'https://heniza.vercel.app/api/obd?code=' + entry.code,
     });
     sources.push(
       entry.source === 'local'
-        ? 'Banco OBD OficIA (local)'
+        ? 'Banco OBD OficIA'
         : entry.source === 'obd-pt'
-          ? 'OBDIICodes PT-BR (fabiovila)'
+          ? 'OBDIICodes PT-BR'
           : 'OBDIICodes EN'
     );
   }
@@ -312,8 +339,7 @@ export async function gatherPublicTechnicalData(input: {
     const olp = await fetchOpenLaborDtc(code);
     if (olp) {
       hits.push(olp);
-      sources.push('Open Labor Project (DTC)');
-      if (olp.snippet) summaryLines.push(olp.snippet);
+      sources.push('Open Labor Project');
     }
   }
 
@@ -327,53 +353,29 @@ export async function gatherPublicTechnicalData(input: {
     if (torque.rows.length) {
       torqueSpecs = torque.rows;
       hits.push(...torque.hits);
-      sources.push('Open Labor Project (torque-specs)');
-      summaryLines.push(
-        `Torques OLP: ` +
-          torque.rows
-            .slice(0, 4)
-            .map((r) => `${r.component} ${r.nm != null ? r.nm + ' N·m' : ''}`.trim())
-            .join('; ')
-      );
+      sources.push('OLP torque');
     }
     if (labor.rows.length) {
       laborTimes = labor.rows;
       hits.push(...labor.hits);
-      sources.push('Open Labor Project (labor-times)');
-      summaryLines.push(
-        `Tempos OLP: ` +
-          labor.rows
-            .slice(0, 4)
-            .map((r) => `${r.job}${r.hours != null ? ` (${r.hours} h)` : ''}`)
-            .join('; ')
-      );
+      sources.push('OLP labor');
     }
   }
 
   if (make && model) {
-    const years = year ? [year] : ['2022', '2020', '2018'];
+    const years = year ? [year] : ['2022', '2020'];
     for (const y of years.slice(0, 2)) {
-      const [recalls, complaints] = await Promise.all([
-        fetchNhtsaRecalls(make, model, y),
-        fetchNhtsaComplaints(make, model, y),
-      ]);
+      const recalls = await fetchNhtsaRecalls(make, model, y);
       if (recalls.length) {
         hits.push(...recalls);
         summaryLines.push(`NHTSA ${make} ${model} ${y}: ${recalls.length} recall(s).`);
         sources.push('NHTSA Recalls');
         break;
       }
-      if (complaints.length && !hits.some((h) => h.kind === 'complaint')) {
-        hits.push(...complaints);
-        sources.push('NHTSA Complaints');
-      }
     }
   }
 
-  if (!summaryLines.length) {
-    summaryLines.push('Sem dados OBD/NHTSA específicos nesta consulta.');
-  }
-
+  if (!summaryLines.length) summaryLines.push('Sem dados específicos nesta consulta.');
   sources.push('https://www.nhtsa.gov/recalls');
 
   return {
@@ -384,5 +386,6 @@ export async function gatherPublicTechnicalData(input: {
     dtc,
     torqueSpecs,
     laborTimes,
+    temperature,
   };
 }
