@@ -6,6 +6,7 @@ import { SelectedLang } from '../data';
 import { BRAZIL_AUTOMAKERS, decodeVinDetails } from '../automakersData';
 import MultimodalMediaCapture from './MultimodalMediaCapture';
 import DiagnosisResultFlow from './DiagnosisResultFlow';
+import ObdLivePanel from './ObdLivePanel';
 
 interface OficIAProps {
   lang: SelectedLang;
@@ -120,12 +121,10 @@ export default function OficIA({
           image: attachedImage,
           video: attachedVideo,
           audio: attachedAudio,
-          lang,
           plate,
           chassis,
           make: currentMaker.name,
           model: selectedModelName,
-          propulsionType: currentModel?.category || 'Flex',
           isEvAlternative: isEvAlternativeMode,
         };
 
@@ -134,63 +133,43 @@ export default function OficIA({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-
-        if (res.ok) {
-          const json = await res.json();
-          rawData = json?.data && typeof json.data === 'object' ? json.data : json;
+        const json = await res.json();
+        if (json?.ok && json?.data) {
+          rawData = json.data;
         }
       }
 
       if (!rawData) {
         rawData = {
-          problemName: `${currentMaker.name} ${selectedModelName} — ${fullQuery.slice(0, 50) || 'Análise'}`,
+          problemName: fullQuery.slice(0, 80) || 'Diagnóstico offline',
           severity: 'Média',
-          originBadge: 'Laudo local',
-          originExplanation: 'Modo offline ou API indisponível.',
-          diagnosticNotes: 'Confirme os sintomas no veículo e repita o diagnóstico online quando possível.',
-          resetProcedure: '1. Ler códigos.\n2. Registrar evidências.\n3. Repetir online.',
-          correctiveChecklist: ['Ler scanner OBD2', 'Verificar bateria e massas', 'Inspecionar conectores'],
-          preventiveChecklist: ['Manutenção em dia'],
+          diagnosticNotes:
+            'Modo offline ou API indisponível. Confirme códigos no scanner e valide no veículo.',
+          correctiveChecklist: [
+            'Ler códigos OBD2',
+            'Verificar bateria e massas',
+            'Inspecionar chicotes',
+          ],
           budgetItems: [
             { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
           ],
           source: 'OficIA (offline)',
-          codeType: 'SCANNER_OBD2',
-          codeTypeLabel: 'Offline',
         };
-      }
-
-      if (!rawData.networkNotes) {
-        rawData.networkNotes =
-          rawData.originExplanation ||
-          'Compare o laudo da IA com o scanner, esquema elétrico e sintoma real do veículo antes de aprovar.';
-      }
-      if (!rawData.networkSources) {
-        rawData.networkSources = [
-          rawData.source || 'Base OficIA',
-          rawData.codeTypeLabel || rawData.originBadge || 'Classificação do código/sintoma',
-        ].filter(Boolean);
       }
 
       setAiResponse(rawData);
 
-      const estTotal =
-        rawData.budgetItems?.reduce(
-          (acc: number, curr: any) => acc + (curr.estimatedCost || 0),
-          0
-        ) || 0;
-      const textMsg = encodeURIComponent(
-        `*OficIA — Laudo*\nVeículo: ${currentMaker.name} ${selectedModelName}\nPlaca: ${plate}\nDiagnóstico: ${rawData.problemName}\nGravidade: ${rawData.severity}\nTotal estimado: R$ ${estTotal.toFixed(2)}`
-      );
-      setWhatsappShareUrl(`https://api.whatsapp.com/send?text=${textMsg}`);
-      setSuccessToast('Laudo gerado. Valide com o checklist do mecânico.');
-
-      setTimeout(() => {
-        document.getElementById('tela-retorno')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
+      const shareText = [
+        `OficIA — ${currentMaker.name} ${selectedModelName}`,
+        `Placa: ${plate}`,
+        `Diagnóstico: ${rawData.problemName || ''}`,
+        rawData.diagnosticNotes || '',
+      ].join('\n');
+      setWhatsappShareUrl(`https://wa.me/?text=${encodeURIComponent(shareText)}`);
+      setSuccessToast('Laudo gerado. Valide com o profissional.');
     } catch (err) {
       console.error(err);
-      setSuccessToast('Erro ao processar diagnóstico.');
+      setSuccessToast('Erro ao gerar diagnóstico. Tente novamente.');
     } finally {
       setAiLoading(false);
     }
@@ -275,6 +254,13 @@ export default function OficIA({
             className="w-full rounded-lg bg-tech-fundo border border-tech-borda px-3 py-2 text-sm text-white"
           />
         </label>
+
+        <ObdLivePanel
+          setSuccessToast={setSuccessToast}
+          onInjectSymptom={(text) =>
+            setSymptomQuery((prev) => (prev ? prev + '\n' + text : text))
+          }
+        />
 
         <MultimodalMediaCapture
           onAddTranscript={(t: string) =>
