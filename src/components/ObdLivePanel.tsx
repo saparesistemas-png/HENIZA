@@ -221,7 +221,8 @@ export default function ObdLivePanel({
                 </button>
                 {onRequestDiagnosis && (
                   <button
-                    type="button"rella onClick={diagnoseWithAi}
+                    type="button"
+                    onClick={diagnoseWithAi}
                     className="px-3 py-2 rounded-xl bg-tech-destaque text-tech-fundo text-[11px] font-black"
                   >
                     Diagnosticar com IA
