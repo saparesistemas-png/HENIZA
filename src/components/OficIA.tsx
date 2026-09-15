@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Wrench, Search, RotateCcw, Car, CheckCircle2
+  Wrench, Search, Car
 } from 'lucide-react';
 import { SelectedLang } from '../data';
-import { BRAZIL_AUTOMAKERS, decodeVinDetails } from '../automakersData';
+import { BRAZIL_AUTOMAKERS } from '../automakersData';
 import MultimodalMediaCapture from './MultimodalMediaCapture';
 import DiagnosisResultFlow from './DiagnosisResultFlow';
 import ObdLivePanel from './ObdLivePanel';
 import SystemUpdateModule from './SystemUpdateModule';
+import ServiceFlowPanel from './ServiceFlowPanel';
 import { getObdLiveSession, PID_DEFS } from '../services/obdLive';
 
 interface OficIAProps {
@@ -26,7 +27,6 @@ interface OficIAProps {
 }
 
 export default function OficIA({
-  lang,
   isOffline,
   setSuccessToast,
   inventory,
@@ -186,7 +186,7 @@ export default function OficIA({
         .filter(Boolean)
         .join('\n');
       setWhatsappShareUrl(`https://wa.me/?text=${encodeURIComponent(shareText)}`);
-      setSuccessToast('Laudo gerado. Valide com o profissional.');
+      setSuccessToast('Laudo gerado. Amarrado ao fluxo OS na etapa Diagnóstico.');
     } catch (err) {
       console.error(err);
       setSuccessToast('Erro ao gerar diagnóstico. Tente novamente.');
@@ -207,7 +207,7 @@ export default function OficIA({
               Ofic<span className="text-tech-destaque">IA</span>
             </h2>
             <p className="text-xs text-slate-400">
-              Diagnóstico + preventiva + atualização de sistemas
+              Fluxo OS · evidências · diagnóstico · preventiva
             </p>
           </div>
         </div>
@@ -276,13 +276,23 @@ export default function OficIA({
           </label>
         </div>
 
+        <ServiceFlowPanel
+          plate={plate}
+          chassis={chassis}
+          make={currentMaker.name}
+          model={selectedModelName}
+          odometerKm={odometerKm ? Number(odometerKm) : undefined}
+          diagnosisData={aiResponse}
+          setSuccessToast={setSuccessToast}
+        />
+
         <label className="block text-xs text-slate-400 space-y-1">
           <span>Relato / código do scanner ou painel</span>
           <textarea
             value={symptomQuery}
             onChange={(e) => setSymptomQuery(e.target.value)}
             rows={3}
-            placeholder="Ex.: P0300, motor falhando… ou atualização de software após troca de bateria"
+            placeholder="Ex.: P0300, motor falhando…"
             className="w-full rounded-lg bg-tech-fundo border border-tech-borda px-3 py-2 text-sm text-white"
           />
         </label>
