@@ -1,9 +1,11 @@
 /**
  * Fontes técnicas públicas / opcionais para o OficIA.
+ * - Banco OBD (local + Codigos-ptbr ~2900)
  * - NHTSA: recalls, complaints, VIN
- * - DTC local OBD-II
- * - Open Labor Project (OPEN_LABOR_API_KEY): dtc-codes, torque-specs, labor-times
+ * - Open Labor Project (OPEN_LABOR_API_KEY): dtc, torque, labor
  */
+
+import { lookupObdCode, extractObdCodes } from './obdDatabase.js';
 
 export type PublicHit = {
   title: string;
@@ -38,17 +40,11 @@ export type PublicTechnicalBundle = {
   laborTimes?: LaborTimeRow[];
 };
 
-function extractDtc(text: string): string | null {
-  const m = (text || '').match(/\b([PCBU]\d{4})\b/i);
-  return m ? m[1].toUpperCase() : null;
-}
-
 function extractYear(text: string): string | undefined {
   const m = (text || '').match(/\b(19|20)\d{2}\b/);
   return m ? m[0] : undefined;
 }
 
-/** Mapeia sintoma/DTC → job slug OLP (quando possível). */
 function inferJobSlug(description: string, code?: string | null): string | undefined {
   const q = (description || '').toLowerCase();
   if (code && /^P030/.test(code)) return 'spark-plugs';
@@ -60,91 +56,6 @@ function inferJobSlug(description: string, code?: string | null): string | undef
   if (/filtro de ar|air filter/.test(q)) return 'air-filter';
   return undefined;
 }
-
-const DTC_DB: Record<string, { title: string; meaning: string; checks: string[] }> = {
-  P0300: {
-    title: 'Random/Multiple Cylinder Misfire Detected',
-    meaning:
-      'Falha de combustão aleatória ou em vários cilindros. Pode danificar o catalisador se persistir.',
-    checks: [
-      'Confirmar cilindros com P0301–P030x',
-      'Velas e bobinas',
-      'Pressão de combustível',
-      'Vazamento de vácuo / ar falso',
-      'Compressão se elétrico/combustível OK',
-    ],
-  },
-  P0301: {
-    title: 'Cylinder 1 Misfire Detected',
-    meaning: 'Falha de combustão no cilindro 1.',
-    checks: ['Bobina/vela do cil. 1', 'Injetor 1', 'Compressão cil. 1'],
-  },
-  P0302: {
-    title: 'Cylinder 2 Misfire Detected',
-    meaning: 'Falha de combustão no cilindro 2.',
-    checks: ['Bobina/vela do cil. 2', 'Injetor 2', 'Compressão cil. 2'],
-  },
-  P0303: {
-    title: 'Cylinder 3 Misfire Detected',
-    meaning: 'Falha de combustão no cilindro 3.',
-    checks: ['Bobina/vela do cil. 3', 'Injetor 3', 'Compressão cil. 3'],
-  },
-  P0304: {
-    title: 'Cylinder 4 Misfire Detected',
-    meaning: 'Falha de combustão no cilindro 4.',
-    checks: ['Bobina/vela do cil. 4', 'Injetor 4', 'Compressão cil. 4'],
-  },
-  P0171: {
-    title: 'System Too Lean (Bank 1)',
-    meaning: 'Mistura pobre no banco 1.',
-    checks: ['Vazamento de admissão', 'MAF/MAP', 'Pressão combustível', 'Sonda lambda'],
-  },
-  P0172: {
-    title: 'System Too Rich (Bank 1)',
-    meaning: 'Mistura rica no banco 1.',
-    checks: ['Injetores vazando', 'Sensor MAF', 'Pressão combustível alta'],
-  },
-  P0420: {
-    title: 'Catalyst System Efficiency Below Threshold (Bank 1)',
-    meaning: 'Eficiência do catalisador abaixo do limite (banco 1).',
-    checks: ['Sondas', 'Fugas de escape', 'Catalisador', 'Misfire prévio'],
-  },
-  P0430: {
-    title: 'Catalyst System Efficiency Below Threshold (Bank 2)',
-    meaning: 'Eficiência do catalisador abaixo do limite (banco 2).',
-    checks: ['Sondas banco 2', 'Fugas de escape', 'Catalisador'],
-  },
-  P0128: {
-    title: 'Coolant Thermostat Temperature Below Regulating',
-    meaning: 'Motor demora a aquecer — termostato ou ECT.',
-    checks: ['Termostato', 'Sensor de temperatura', 'Nível de arrefecimento'],
-  },
-  P0401: {
-    title: 'EGR Flow Insufficient',
-    meaning: 'Fluxo de EGR insuficiente.',
-    checks: ['Válvula EGR', 'Passagens carbonizadas'],
-  },
-  P0500: {
-    title: 'Vehicle Speed Sensor Malfunction',
-    meaning: 'Falha no sensor de velocidade.',
-    checks: ['Sensor VSS', 'Chicote', 'ABS'],
-  },
-  P0700: {
-    title: 'Transmission Control System Malfunction',
-    meaning: 'Falha geral do controle da transmissão.',
-    checks: ['Códigos do TCM', 'Nível/ATF', 'Conectores'],
-  },
-  U0100: {
-    title: 'Lost Communication With ECM/PCM',
-    meaning: 'Perda de comunicação com o módulo do motor.',
-    checks: ['Alimentação/massa ECM', 'Rede CAN'],
-  },
-  U0101: {
-    title: 'Lost Communication With TCM',
-    meaning: 'Perda de comunicação com o TCM.',
-    checks: ['Rede CAN', 'Alimentação TCM'],
-  },
-};
 
 async function fetchJson(url: string, timeoutMs = 8000): Promise<any | null> {
   const ctrl = new AbortController();
@@ -257,10 +168,6 @@ export async function fetchOpenLaborDtc(code: string): Promise<PublicHit | null>
   };
 }
 
-/**
- * GET /api/v1/torque-specs?make=&model=&year=&job=
- * Resposta típica: { data: { torqueSpecs: [ { component, nm, lbFt, ... } ] } }
- */
 export async function fetchOpenLaborTorqueSpecs(input: {
   make: string;
   model: string;
@@ -268,25 +175,17 @@ export async function fetchOpenLaborTorqueSpecs(input: {
   job?: string;
 }): Promise<{ rows: TorqueSpecRow[]; hits: PublicHit[] }> {
   if (!input.make || !input.model || !input.year) return { rows: [], hits: [] };
-
   const qs = new URLSearchParams({
     make: input.make.toLowerCase(),
     model: input.model.toLowerCase().replace(/\s+/g, '-'),
     year: input.year,
   });
   if (input.job) qs.set('job', input.job);
-
   const data = await olpFetch(`/api/v1/torque-specs?${qs.toString()}`);
   if (!data) return { rows: [], hits: [] };
-
   const list: any[] =
-    data?.data?.torqueSpecs ||
-    data?.torqueSpecs ||
-    data?.data ||
-    (Array.isArray(data) ? data : []);
-
+    data?.data?.torqueSpecs || data?.torqueSpecs || data?.data || (Array.isArray(data) ? data : []);
   if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
-
   const rows: TorqueSpecRow[] = list.slice(0, 12).map((t: any) => ({
     job: t.job,
     component: t.component || t.name || 'Fixador',
@@ -296,22 +195,15 @@ export async function fetchOpenLaborTorqueSpecs(input: {
     isCritical: Boolean(t.isCritical),
     notes: t.notes,
   }));
-
   const hits: PublicHit[] = rows.slice(0, 6).map((t) => ({
-    title: `Torque OLP: ${t.component}${t.nm != null ? ` — ${t.nm} N·m` : ''}${t.lbFt != null ? ` (${t.lbFt} lb·ft)` : ''}`,
+    title: `Torque OLP: ${t.component}${t.nm != null ? ` — ${t.nm} N·m` : ''}`,
     url: 'https://openlaborproject.com/docs/api',
-    snippet: [t.job, t.isCritical ? 'CRÍTICO' : '', t.notes, t.angleDegrees != null ? `Ângulo: ${t.angleDegrees}°` : '']
-      .filter(Boolean)
-      .join(' · '),
+    snippet: [t.job, t.isCritical ? 'CRÍTICO' : '', t.notes].filter(Boolean).join(' · '),
     kind: 'torque' as const,
   }));
-
   return { rows, hits };
 }
 
-/**
- * GET /api/v1/labor-times?make=&model=&year=&job=
- */
 export async function fetchOpenLaborLaborTimes(input: {
   make: string;
   model: string;
@@ -319,44 +211,33 @@ export async function fetchOpenLaborLaborTimes(input: {
   job?: string;
 }): Promise<{ rows: LaborTimeRow[]; hits: PublicHit[] }> {
   if (!input.make || !input.model || !input.year) return { rows: [], hits: [] };
-
   const qs = new URLSearchParams({
     make: input.make.toLowerCase(),
     model: input.model.toLowerCase().replace(/\s+/g, '-'),
     year: input.year,
   });
   if (input.job) qs.set('job', input.job);
-
   const data = await olpFetch(`/api/v1/labor-times?${qs.toString()}`);
   if (!data) return { rows: [], hits: [] };
-
   const list: any[] =
     data?.data?.laborTimes ||
     data?.data?.jobs ||
     data?.laborTimes ||
     data?.data ||
     (Array.isArray(data) ? data : []);
-
   if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
-
   const rows: LaborTimeRow[] = list.slice(0, 10).map((j: any) => ({
     job: j.job || j.name || j.description || 'Serviço',
     hours: typeof j.hours === 'number' ? j.hours : typeof j.time === 'number' ? j.time : undefined,
     notes: j.notes,
   }));
-
   const hits: PublicHit[] = rows.slice(0, 5).map((j) => ({
     title: `Mão de obra OLP: ${j.job}${j.hours != null ? ` — ${j.hours} h` : ''}`,
     url: 'https://openlaborproject.com/docs/api',
-    snippet: j.notes || 'Tempo de referência Open Labor Project',
+    snippet: j.notes || 'Tempo de referência OLP',
     kind: 'labor' as const,
   }));
-
   return { rows, hits };
-}
-
-export function lookupLocalDtc(code: string) {
-  return DTC_DB[code.toUpperCase()] || null;
 }
 
 export async function gatherPublicTechnicalData(input: {
@@ -366,7 +247,8 @@ export async function gatherPublicTechnicalData(input: {
   chassis?: string;
 }): Promise<PublicTechnicalBundle> {
   const desc = input.description || '';
-  const code = extractDtc(desc);
+  const codes = extractObdCodes(desc);
+  const code = codes[0] || null;
   let make = (input.make || '').trim();
   let model = (input.model || '').split(/[\s(]/)[0]?.trim() || '';
   let year = extractYear(desc) || extractYear(input.model || '');
@@ -398,27 +280,43 @@ export async function gatherPublicTechnicalData(input: {
     }
   }
 
-  if (code) {
-    const local = lookupLocalDtc(code);
-    if (local) {
-      dtc = { code, ...local };
-      summaryLines.push(`DTC ${code}: ${local.title}. ${local.meaning}`);
-      hits.push({
-        title: `DTC ${code} — ${local.title}`,
-        snippet: local.meaning + ' Verificações: ' + local.checks.join('; '),
-        kind: 'dtc',
-      });
-      sources.push('Base DTC OficIA');
+  // Banco OBD (local + PT ~2900)
+  for (const c of codes.slice(0, 5)) {
+    const entry = await lookupObdCode(c);
+    if (!entry) continue;
+    if (!dtc) {
+      dtc = {
+        code: entry.code,
+        title: entry.title,
+        meaning: entry.meaning,
+        checks: entry.checks,
+      };
     }
+    summaryLines.push(`DTC ${entry.code} [${entry.source}]: ${entry.title}. ${entry.meaning}`);
+    hits.push({
+      title: `DTC ${entry.code} — ${entry.title}`,
+      snippet: `${entry.meaning} | Família: ${entry.family || 'OBD'} | Verificações: ${entry.checks.join('; ')}`,
+      kind: 'dtc',
+      url: 'https://heniza.vercel.app/api/obd?code=' + entry.code,
+    });
+    sources.push(
+      entry.source === 'local'
+        ? 'Banco OBD OficIA (local)'
+        : entry.source === 'obd-pt'
+          ? 'OBDIICodes PT-BR (fabiovila)'
+          : 'OBDIICodes EN'
+    );
+  }
+
+  if (code) {
     const olp = await fetchOpenLaborDtc(code);
     if (olp) {
       hits.push(olp);
       sources.push('Open Labor Project (DTC)');
-      summaryLines.push(olp.snippet);
+      if (olp.snippet) summaryLines.push(olp.snippet);
     }
   }
 
-  // Torque + labor (precisa make/model/year + chave OLP)
   const job = inferJobSlug(desc, code);
   const yearForOlp = year || '2018';
   if (make && model && process.env.OPEN_LABOR_API_KEY) {
@@ -426,22 +324,18 @@ export async function gatherPublicTechnicalData(input: {
       fetchOpenLaborTorqueSpecs({ make, model, year: yearForOlp, job }),
       fetchOpenLaborLaborTimes({ make, model, year: yearForOlp, job }),
     ]);
-
     if (torque.rows.length) {
       torqueSpecs = torque.rows;
       hits.push(...torque.hits);
       sources.push('Open Labor Project (torque-specs)');
-      const crit = torque.rows.filter((r) => r.isCritical).slice(0, 3);
       summaryLines.push(
-        `Torques OLP (${torque.rows.length}): ` +
+        `Torques OLP: ` +
           torque.rows
             .slice(0, 4)
             .map((r) => `${r.component} ${r.nm != null ? r.nm + ' N·m' : ''}`.trim())
-            .join('; ') +
-          (crit.length ? ` | Críticos: ${crit.map((c) => c.component).join(', ')}` : '')
+            .join('; ')
       );
     }
-
     if (labor.rows.length) {
       laborTimes = labor.rows;
       hits.push(...labor.hits);
@@ -477,9 +371,7 @@ export async function gatherPublicTechnicalData(input: {
   }
 
   if (!summaryLines.length) {
-    summaryLines.push(
-      'Sem dados públicos específicos. Com OPEN_LABOR_API_KEY, torque e tempos entram automaticamente.'
-    );
+    summaryLines.push('Sem dados OBD/NHTSA específicos nesta consulta.');
   }
 
   sources.push('https://www.nhtsa.gov/recalls');
