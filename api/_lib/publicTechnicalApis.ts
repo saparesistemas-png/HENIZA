@@ -1,7 +1,7 @@
 /**
  * Fontes técnicas públicas / opcionais para o OficIA.
  * - Banco OBD + sensores de temperatura
- * - NHTSA + Open Labor (opcional)
+ * - NHTSA (recalls + software + complaints) + Open Labor (opcional)
  */
 
 import { lookupObdCode, extractObdCodes } from './obdDatabase.js';
@@ -15,7 +15,7 @@ export type PublicHit = {
   title: string;
   url?: string;
   snippet: string;
-  kind: 'recall' | 'complaint' | 'dtc' | 'vin' | 'oem' | 'web' | 'torque' | 'labor';
+  kind: 'recall' | 'complaint' | 'dtc' | 'vin' | 'oem' | 'web' | 'torque' | 'labor' | 'software';
 };
 
 export type TorqueSpecRow = {
@@ -64,6 +64,13 @@ function inferJobSlug(description: string, code?: string | null): string | undef
   if (/termostato|arrefec|radiador|superaquec/.test(q)) return 'thermostat';
   if (/bateria|battery/.test(q)) return 'battery-replacement';
   return undefined;
+}
+
+const SOFTWARE_RE =
+  /software|reprogram|re-program|flash(?:ing)?|calibrat|firmware|over[\s-]?the[\s-]?air|\bOTA\b|control module.*update|update.*module|module.*update/i;
+
+export function isSoftwareRelatedText(...parts: Array<string | undefined | null>): boolean {
+  return SOFTWARE_RE.test(parts.filter(Boolean).join(' '));
 }
 
 async function fetchJson(url: string, timeoutMs = 8000): Promise<any | null> {
@@ -131,17 +138,27 @@ export async function fetchNhtsaRecalls(make: string, model: string, year?: stri
     `https://api.nhtsa.gov/recalls/recallsByVehicle?make=${encodeURIComponent(make)}` +
     `&model=${encodeURIComponent(model)}&modelYear=${encodeURIComponent(y)}`;
   const data = await fetchJson(url);
-  return (data?.results || []).slice(0, 5).map((r: any) => ({
-    title: `Recall NHTSA ${r.NHTSACampaignNumber || ''} — ${r.Component || 'componente'}`,
-    url: r.NHTSACampaignNumber
-      ? `https://www.nhtsa.gov/recalls?nhtsaId=${r.NHTSACampaignNumber}`
-      : 'https://www.nhtsa.gov/recalls',
-    snippet: [r.Summary, r.Remedy].filter(Boolean).join(' ').slice(0, 320),
-    kind: 'recall' as const,
-  }));
+  return (data?.results || []).slice(0, 8).map((r: any) => {
+    const soft =
+      isSoftwareRelatedText(r.Summary, r.Remedy, r.Component) || Boolean(r.overTheAirUpdate);
+    return {
+      title:
+        (soft ? 'Software/Update · ' : 'Recall NHTSA ') +
+        `${r.NHTSACampaignNumber || ''} — ${r.Component || 'componente'}`.trim(),
+      url: r.NHTSACampaignNumber
+        ? `https://www.nhtsa.gov/recalls?nhtsaId=${r.NHTSACampaignNumber}`
+        : 'https://www.nhtsa.gov/recalls',
+      snippet: [r.Summary, r.Remedy].filter(Boolean).join(' ').slice(0, 320),
+      kind: (soft ? 'software' : 'recall') as PublicHit['kind'],
+    };
+  });
 }
 
-export async function fetchNhtsaComplaints(make: string, model: string, year?: string): Promise<PublicHit[]> {
+export async function fetchNhtsaComplaints(
+  make: string,
+  model: string,
+  year?: string
+): Promise<PublicHit[]> {
   if (!make || !model) return [];
   const y = year || '2020';
   const url =
@@ -149,12 +166,123 @@ export async function fetchNhtsaComplaints(make: string, model: string, year?: s
     `&model=${encodeURIComponent(model)}&modelYear=${encodeURIComponent(y)}`;
   const data = await fetchJson(url);
   const results = data?.results || data?.complaints || [];
-  return (Array.isArray(results) ? results : []).slice(0, 3).map((r: any) => ({
+  return (Array.isArray(results) ? results : []).slice(0, 4).map((r: any) => ({
     title: `Reclamação NHTSA ${r.odiNumber || ''} — ${r.components || 'sistema'}`,
     url: 'https://www.nhtsa.gov/recalls',
     snippet: String(r.summary || r.complaintSummary || r.components || '').slice(0, 280),
     kind: 'complaint' as const,
   }));
+}
+
+/** Recalls multi-ano + flag de campanha de software/reprogramação. */
+export async function fetchNhtsaRecallsEnhanced(
+  make: string,
+  model: string,
+  years: string[]
+): Promise<{ hits: PublicHit[]; softwareHits: PublicHit[]; total: number }> {
+  if (!make || !model) return { hits: [], softwareHits: [], total: 0 };
+  const hits: PublicHit[] = [];
+  const softwareHits: PublicHit[] = [];
+  const seen = new Set<string>();
+
+  for (const y of years.slice(0, 4)) {
+    const url =
+      `https://api.nhtsa.gov/recalls/recallsByVehicle?make=${encodeURIComponent(make)}` +
+      `&model=${encodeURIComponent(model)}&modelYear=${encodeURIComponent(y)}`;
+    const data = await fetchJson(url);
+    const results = data?.results || [];
+    for (const r of results) {
+      const id = String(r.NHTSACampaignNumber || r.NHTSAActionNumber || `${y}-${r.Component}`);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const summary = String(r.Summary || '');
+      const remedy = String(r.Remedy || '');
+      const component = String(r.Component || '');
+      const soft =
+        isSoftwareRelatedText(summary, remedy, component) || Boolean(r.overTheAirUpdate);
+      const hit: PublicHit = {
+        title:
+          (soft ? 'Software/Update · ' : 'Recall NHTSA ') +
+          `${r.NHTSACampaignNumber || ''} — ${component || 'componente'}`.trim(),
+        url: r.NHTSACampaignNumber
+          ? `https://www.nhtsa.gov/recalls?nhtsaId=${r.NHTSACampaignNumber}`
+          : 'https://www.nhtsa.gov/recalls',
+        snippet: [summary, remedy].filter(Boolean).join(' ').slice(0, 360),
+        kind: soft ? 'software' : 'recall',
+      };
+      hits.push(hit);
+      if (soft) softwareHits.push(hit);
+    }
+    if (hits.length >= 12) break;
+  }
+
+  return { hits: hits.slice(0, 12), softwareHits: softwareHits.slice(0, 6), total: hits.length };
+}
+
+/** Busca automática NHTSA: vários anos + reclamações + prioridade software. */
+export async function autoSearchNhtsa(input: {
+  make: string;
+  model: string;
+  year?: string;
+  description?: string;
+}): Promise<{
+  hits: PublicHit[];
+  softwareHits: PublicHit[];
+  complaintHits: PublicHit[];
+  summaryLines: string[];
+  sources: string[];
+}> {
+  const make = (input.make || '').trim();
+  const model = (input.model || '').split(/[\s(]/)[0]?.trim() || '';
+  if (!make || !model) {
+    return { hits: [], softwareHits: [], complaintHits: [], summaryLines: [], sources: [] };
+  }
+
+  const year =
+    input.year || extractYear(input.description || '') || extractYear(input.model || '') || '';
+  const years = year
+    ? [year, String(Number(year) - 1), String(Number(year) + 1)].filter(
+        (y) => /^\d{4}$/.test(y) && Number(y) >= 1995 && Number(y) <= 2030
+      )
+    : ['2023', '2021', '2019', '2017'];
+
+  const [rec, complaints] = await Promise.all([
+    fetchNhtsaRecallsEnhanced(make, model, years),
+    fetchNhtsaComplaints(make, model, years[0]),
+  ]);
+
+  const summaryLines: string[] = [];
+  const sources: string[] = [];
+
+  if (rec.total) {
+    summaryLines.push(
+      `NHTSA ${make} ${model}${year ? ' ' + year : ''}: ${rec.total} recall(s) público(s).`
+    );
+    sources.push('NHTSA Recalls API');
+  }
+  if (rec.softwareHits.length) {
+    summaryLines.push(
+      `Campanhas com software/reprogramação: ${rec.softwareHits.length} — priorizar portal OEM / J2534.`
+    );
+    sources.push('NHTSA software campaigns');
+  }
+  if (complaints.length) {
+    summaryLines.push(`Reclamações NHTSA (amostra): ${complaints.length}.`);
+    sources.push('NHTSA Complaints API');
+  }
+
+  const hits = [
+    ...rec.softwareHits,
+    ...rec.hits.filter((h) => h.kind !== 'software'),
+    ...complaints,
+  ];
+  return {
+    hits: hits.slice(0, 14),
+    softwareHits: rec.softwareHits,
+    complaintHits: complaints,
+    summaryLines,
+    sources: Array.from(new Set(sources)),
+  };
 }
 
 export async function fetchOpenLaborDtc(code: string): Promise<PublicHit | null> {
@@ -222,7 +350,11 @@ export async function fetchOpenLaborLaborTimes(input: {
   const data = await olpFetch(`/api/v1/labor-times?${qs.toString()}`);
   if (!data) return { rows: [], hits: [] };
   const list: any[] =
-    data?.data?.laborTimes || data?.data?.jobs || data?.laborTimes || data?.data || (Array.isArray(data) ? data : []);
+    data?.data?.laborTimes ||
+    data?.data?.jobs ||
+    data?.laborTimes ||
+    data?.data ||
+    (Array.isArray(data) ? data : []);
   if (!Array.isArray(list) || !list.length) return { rows: [], hits: [] };
   const rows: LaborTimeRow[] = list.slice(0, 10).map((j: any) => ({
     job: j.job || j.name || j.description || 'Serviço',
@@ -279,7 +411,6 @@ export async function gatherPublicTechnicalData(input: {
     }
   }
 
-  // Sensores de temperatura (ECT/IAT/óleo/TFT/CAT/EV)
   const tempDiag = diagnoseTemperature(desc);
   if (tempDiag) {
     temperature = {
@@ -362,21 +493,29 @@ export async function gatherPublicTechnicalData(input: {
     }
   }
 
+  // Busca automática NHTSA (recalls multi-ano + software + complaints)
   if (make && model) {
-    const years = year ? [year] : ['2022', '2020'];
-    for (const y of years.slice(0, 2)) {
-      const recalls = await fetchNhtsaRecalls(make, model, y);
-      if (recalls.length) {
-        hits.push(...recalls);
-        summaryLines.push(`NHTSA ${make} ${model} ${y}: ${recalls.length} recall(s).`);
-        sources.push('NHTSA Recalls');
-        break;
-      }
+    const nhtsa = await autoSearchNhtsa({
+      make,
+      model,
+      year: year || undefined,
+      description: desc,
+    });
+    if (nhtsa.hits.length) {
+      hits.push(...nhtsa.hits);
+      summaryLines.push(...nhtsa.summaryLines);
+      sources.push(...nhtsa.sources);
+    } else {
+      summaryLines.push(
+        `NHTSA: sem recalls/reclamações para ${make} ${model}${year ? ' ' + year : ''}.`
+      );
+      sources.push('NHTSA Recalls API');
     }
   }
 
   if (!summaryLines.length) summaryLines.push('Sem dados específicos nesta consulta.');
   sources.push('https://www.nhtsa.gov/recalls');
+  sources.push('https://www.nhtsa.gov/nhtsa-datasets-and-apis');
 
   return {
     summaryLines,
