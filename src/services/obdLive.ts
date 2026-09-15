@@ -1,9 +1,15 @@
+import {
+  createFaultEngineState,
+  evaluateFaults,
+  FaultEngineState,
+  FaultEvent,
+} from './faultEngine';
+
 /**
  * Leitura OBD-II em tempo real via adaptador ELM327.
  * - Web Bluetooth (BLE) no Chrome/Android
  * - Simulador para demo sem hardware
- *
- * Protocolo: comandos AT + Mode 01 PIDs (ISO 15031 / SAE J1979).
+ * - faultEngine em cada ciclo de amostras
  */
 
 export type PidId =
@@ -61,9 +67,9 @@ export type ObdLiveSnapshot = {
   samples: Partial<Record<PidId, PidSample>>;
   lastError?: string;
   dtcCount?: number;
+  faults?: FaultEvent[];
 };
 
-/** PIDs Mode 01 mais usados em oficina. */
 export const PID_DEFS: PidDefinition[] = [
   {
     id: 'rpm',
@@ -247,13 +253,11 @@ export const DEFAULT_POLL_PIDS: PidId[] = [
 ];
 
 const BLE_UART_CANDIDATES: Array<{ service: string; rx: string; tx: string }> = [
-  // Nordic UART
   {
     service: '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
     tx: '6e400002-b5a3-f393-e0a9-e50e24dcca9e',
     rx: '6e400003-b5a3-f393-e0a9-e50e24dcca9e',
   },
-  // Common ELM327 BLE clones
   {
     service: '0000fff0-0000-1000-8000-00805f9b34fb',
     tx: '0000fff2-0000-1000-8000-00805f9b34fb',
@@ -274,7 +278,6 @@ function buildPidCommand(mode: number, pid: number) {
   return `${toHex2(mode)}${toHex2(pid)}\r`;
 }
 
-/** Parse resposta ELM tipo "41 0C 1A F8" */
 export function parseElmPidResponse(
   response: string,
   mode: number,
@@ -294,28 +297,21 @@ export function parseElmPidResponse(
 
   const expectHeader = `${toHex2(mode + 0x40)} ${toHex2(pid)}`;
   const expectCompact = `${toHex2(mode + 0x40)}${toHex2(pid)}`;
-
-  // Prefer line that contains the positive response header
   const parts = cleaned.split(' ').filter(Boolean);
   const hexBytes: string[] = [];
   for (const p of parts) {
     if (/^[0-9A-F]{2}$/.test(p)) hexBytes.push(p);
   }
 
-  // Find header index
   let start = -1;
   for (let i = 0; i < hexBytes.length - 1; i++) {
-    if (
-      hexBytes[i] === toHex2(mode + 0x40) &&
-      hexBytes[i + 1] === toHex2(pid)
-    ) {
+    if (hexBytes[i] === toHex2(mode + 0x40) && hexBytes[i + 1] === toHex2(pid)) {
       start = i + 2;
       break;
     }
   }
 
   if (start < 0) {
-    // compact form without spaces already split wrong — try regex
     const m = cleaned.replace(/ /g, '').match(
       new RegExp(`${toHex2(mode + 0x40)}${toHex2(pid)}([0-9A-F]+)`)
     );
@@ -357,6 +353,8 @@ export class ObdLiveSession {
   private commandQueue: Promise<void> = Promise.resolve();
   private simTimer: ReturnType<typeof setInterval> | null = null;
   private pendingResolve: ((text: string) => void) | null = null;
+  private faultState: FaultEngineState = createFaultEngineState();
+  private faults: FaultEvent[] = [];
 
   subscribe(fn: Listener) {
     this.listeners.add(fn);
@@ -364,7 +362,23 @@ export class ObdLiveSession {
     return () => this.listeners.delete(fn);
   }
 
+  private recomputeFaults() {
+    const inputs = Object.values(this.samples)
+      .filter(Boolean)
+      .map((s) => ({
+        id: s!.id,
+        value: s!.value,
+        unit: s!.unit,
+        ok: s!.ok,
+        at: s!.at,
+      }));
+    const { events, state } = evaluateFaults(inputs, this.faultState);
+    this.faultState = state;
+    this.faults = events;
+  }
+
   private emit() {
+    this.recomputeFaults();
     const snap = this.snapshot();
     this.listeners.forEach((fn) => fn(snap));
   }
@@ -376,6 +390,7 @@ export class ObdLiveSession {
       protocol: this.protocol,
       samples: { ...this.samples },
       lastError: this.lastError,
+      faults: [...this.faults],
     };
   }
 
@@ -424,13 +439,13 @@ export class ObdLiveSession {
           linked = true;
           break;
         } catch {
-          /* tenta próximo UUID */
+          /* next UUID */
         }
       }
 
       if (!linked) {
         throw new Error(
-          'Adaptador encontrado, mas serviço UART BLE não reconhecido. Preferir ELM327 BLE (não o clássico SPP).'
+          'Adaptador encontrado, mas serviço UART BLE não reconhecido. Preferir ELM327 BLE.'
         );
       }
 
@@ -445,7 +460,6 @@ export class ObdLiveSession {
     }
   }
 
-  /** Modo demo sem hardware — gera valores realistas. */
   startSimulator() {
     this.stopPolling();
     this.cleanupConnection('simulated');
@@ -453,6 +467,7 @@ export class ObdLiveSession {
     this.deviceName = 'Simulador OBD';
     this.protocol = 'SIM';
     this.lastError = undefined;
+    this.faultState = createFaultEngineState();
     this.emit();
 
     let t = 0;
@@ -549,7 +564,7 @@ export class ObdLiveSession {
         const r = await this.sendCommand(c, 4000);
         if (c === 'ATZ') this.protocol = r.replace(/[\r\n>]/g, ' ').trim().slice(0, 40);
       } catch {
-        /* alguns clones falham em comandos isolados */
+        /* clones */
       }
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -569,7 +584,7 @@ export class ObdLiveSession {
       };
     }
 
-    if (this.state === 'simulated' || this.state === 'polling' && this.simTimer) {
+    if (this.simTimer) {
       return (
         this.samples[id] || {
           id,
@@ -638,7 +653,6 @@ export class ObdLiveSession {
       throw new Error('Conecte o adaptador ou inicie o simulador antes.');
     }
     if (this.simTimer) {
-      // simulador já emite sozinho
       this.state = 'polling';
       this.emit();
       return;
@@ -668,24 +682,22 @@ export class ObdLiveSession {
     if (emit) this.emit();
   }
 
-  /** Monta texto de sintomas a partir do live data (para o diagnóstico IA). */
   buildSymptomHint(): string {
+    this.recomputeFaults();
     const s = this.samples;
     const bits: string[] = ['Leitura OBD ao vivo:'];
-    const cool = s.coolant?.value;
-    const iat = s.iat?.value;
-    const rpm = s.rpm?.value;
-    const stft = s.stft_b1?.value;
-    if (cool != null) {
-      bits.push(`ECT ${cool}°C`);
-      if (cool > 110) bits.push('superaquecimento');
-      if (cool < 70 && rpm && rpm > 500) bits.push('motor frio / termostato');
-    }
-    if (iat != null) bits.push(`IAT ${iat}°C`);
-    if (rpm != null) bits.push(`RPM ${rpm}`);
-    if (stft != null && Math.abs(stft) > 15) bits.push(`STFT fora de faixa (${stft}%)`);
-    if (s.voltage?.value != null && s.voltage.value < 12.2) bits.push('tensão baixa');
+    if (s.coolant?.value != null) bits.push(`ECT ${s.coolant.value}°C`);
+    if (s.iat?.value != null) bits.push(`IAT ${s.iat.value}°C`);
+    if (s.rpm?.value != null) bits.push(`RPM ${s.rpm.value}`);
+    if (s.stft_b1?.value != null) bits.push(`STFT ${s.stft_b1.value}%`);
+    if (s.voltage?.value != null) bits.push(`${s.voltage.value} V`);
+    if (this.faults.length) bits.push('Falhas: ' + this.faults.map((f) => f.id).join(', '));
     return bits.join(' · ');
+  }
+
+  getFaultEvents(): FaultEvent[] {
+    this.recomputeFaults();
+    return [...this.faults];
   }
 
   disconnect() {
@@ -719,7 +731,6 @@ export class ObdLiveSession {
   }
 }
 
-/** Singleton de sessão para o OficIA. */
 let shared: ObdLiveSession | null = null;
 export function getObdLiveSession() {
   if (!shared) shared = new ObdLiveSession();
