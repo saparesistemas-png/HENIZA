@@ -12,10 +12,8 @@ export type ImageValidationLimits = {
   minBytes: number;
   minAspect?: number;
   maxAspect?: number;
-  /** 0–255 média de luminância mínima */
   minBrightness: number;
   maxBrightness: number;
-  /** Variância Laplacian aproximada (nitidez) */
   minSharpness: number;
 };
 
@@ -36,7 +34,6 @@ export type ImageValidationResult = {
   metrics?: ImageMetrics;
 };
 
-/** Limites padrão oficina / locadora (foto de evidência). */
 export const DEFAULT_IMAGE_LIMITS: ImageValidationLimits = {
   minWidth: 640,
   minHeight: 480,
@@ -51,7 +48,6 @@ export const DEFAULT_IMAGE_LIMITS: ImageValidationLimits = {
   minSharpness: 18,
 };
 
-/** Slots de placa / odômetro: mais exigentes em nitidez e resolução. */
 export const STRICT_PLATE_LIMITS: ImageValidationLimits = {
   ...DEFAULT_IMAGE_LIMITS,
   minWidth: 800,
@@ -61,7 +57,7 @@ export const STRICT_PLATE_LIMITS: ImageValidationLimits = {
 };
 
 export function limitsForSlot(slotId: string): ImageValidationLimits {
-  if (/placa|odometro|odômetro|scanner|painel/i.test(slotId)) {
+  if (/placa|odometro|odômetro|scanner|painel|odometer/i.test(slotId)) {
     return STRICT_PLATE_LIMITS;
   }
   return DEFAULT_IMAGE_LIMITS;
@@ -71,7 +67,6 @@ function dataUrlByteLength(dataUrl: string): number {
   const i = dataUrl.indexOf(',');
   if (i < 0) return dataUrl.length;
   const b64 = dataUrl.slice(i + 1);
-  // aproximação: 3/4 do base64
   return Math.floor((b64.length * 3) / 4);
 }
 
@@ -89,7 +84,6 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Amostra pixels para brilho médio e nitidez (variância de diferenças). */
 function analyzePixels(img: HTMLImageElement): { brightness: number; sharpness: number } {
   const maxSide = 160;
   const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
@@ -118,21 +112,14 @@ function analyzePixels(img: HTMLImageElement): { brightness: number; sharpness: 
     count++;
   }
   const brightness = count ? sum / count : 0;
-
-  // Laplacian-ish: diferença com vizinhos
   let sharpSum = 0;
   let sharpN = 0;
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
-      const i = y * w + x;
-      const lap =
-        Math.abs(
-          4 * gray[i] -
-            gray[i - 1] -
-            gray[i + 1] -
-            gray[i - w] -
-            gray[i + w]
-        );
+      const idx = y * w + x;
+      const lap = Math.abs(
+        4 * gray[idx] - gray[idx - 1] - gray[idx + 1] - gray[idx - w] - gray[idx + w]
+      );
       sharpSum += lap;
       sharpN++;
     }
@@ -152,33 +139,30 @@ export async function validateImageDataUrl(
     return { ok: false, errors: ['Imagem ausente.'], warnings: [] };
   }
   if (!dataUrl.startsWith('data:image/')) {
-    return {
-      ok: false,
-      errors: ['Formato inválido: use foto JPEG ou PNG (data:image).'],
-      warnings: [],
-    };
+    return { ok: false, errors: ['Formato inválido: use foto JPEG ou PNG.'], warnings: [] };
   }
 
   const mime = parseMime(dataUrl);
-  const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-  if (mime && !allowed.some((a) => mime.startsWith(a.split('/')[0]) && mime.includes(a.split('/')[1]?.replace('jpg', 'jpeg') || '') || allowed.includes(mime))) {
-    // relax: accept any image/*
-    if (!mime.startsWith('image/')) {
-      errors.push(`MIME não suportado: ${mime}`);
-    }
-  }
+  const allowed = new Set([
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+  ]);
   if (mime === 'image/gif') {
     errors.push('GIF não é aceito como evidência. Use JPEG ou PNG.');
+  } else if (mime && !allowed.has(mime) && !mime.startsWith('image/')) {
+    errors.push(`Tipo não suportado: ${mime}`);
   }
 
   const byteLength = dataUrlByteLength(dataUrl);
   if (byteLength < limits.minBytes) {
-    errors.push(`Arquivo muito pequeno (${Math.round(byteLength / 1024)} KB). Tire outra foto.`);
+    errors.push(`Arquivo muito pequeno (${Math.round(byteLength / 1024)} KB).`);
   }
   if (byteLength > limits.maxBytes) {
-    errors.push(
-      `Arquivo muito grande (${Math.round(byteLength / 1024)} KB). Comprima ou reduza a resolução.`
-    );
+    errors.push(`Arquivo muito grande (${Math.round(byteLength / 1024)} KB).`);
   }
 
   let img: HTMLImageElement;
@@ -196,7 +180,7 @@ export async function validateImageDataUrl(
     );
   }
   if (width > limits.maxWidth || height > limits.maxHeight) {
-    warnings.push(`Resolução muito alta (${width}×${height}); será redimensionada no envio.`);
+    warnings.push(`Resolução alta (${width}×${height}); será reduzida no envio.`);
   }
 
   const aspect = height ? width / height : 1;
@@ -209,54 +193,28 @@ export async function validateImageDataUrl(
 
   const { brightness, sharpness } = analyzePixels(img);
   if (brightness < limits.minBrightness) {
-    errors.push(
-      `Foto escura demais (brilho ${brightness.toFixed(0)}). Melhore a iluminação ou use flash.`
-    );
+    errors.push(`Foto escura demais (brilho ${brightness.toFixed(0)}). Melhore a iluminação.`);
   }
   if (brightness > limits.maxBrightness) {
-    errors.push(
-      `Foto estourada (brilho ${brightness.toFixed(0)}). Evite sol direto / flash no painel.`
-    );
+    errors.push(`Foto estourada (brilho ${brightness.toFixed(0)}). Evite reflexo no painel.`);
   }
   if (sharpness < limits.minSharpness) {
-    errors.push(
-      `Imagem borrosa ou sem foco (nitidez ${sharpness.toFixed(0)}). Refaça com câmera firme.`
-    );
+    errors.push(`Imagem borrosa (nitidez ${sharpness.toFixed(0)}). Refaça com câmera firme.`);
   }
-
-  const metrics: ImageMetrics = {
-    width,
-    height,
-    aspect,
-    byteLength,
-    mime,
-    brightness,
-    sharpness,
-  };
 
   return {
     ok: errors.length === 0,
     errors,
     warnings,
-    metrics,
+    metrics: { width, height, aspect, byteLength, mime, brightness, sharpness },
   };
 }
 
-/** Valida File antes de converter. */
 export function validateImageFile(file: File): ImageValidationResult {
   const errors: string[] = [];
-  const warnings: string[] = [];
-  if (!file.type.startsWith('image/')) {
-    errors.push('Arquivo não é imagem.');
-  }
-  if (file.type === 'image/gif') {
-    errors.push('GIF não permitido.');
-  }
-  if (file.size < 5_000) {
-    errors.push('Arquivo muito pequeno.');
-  }
-  if (file.size > 12_000_000) {
-    errors.push('Arquivo > 12 MB. Reduza antes de enviar.');
-  }
-  return { ok: errors.length === 0, errors, warnings };
+  if (!file.type.startsWith('image/')) errors.push('Arquivo não é imagem.');
+  if (file.type === 'image/gif') errors.push('GIF não permitido.');
+  if (file.size < 5_000) errors.push('Arquivo muito pequeno.');
+  if (file.size > 12_000_000) errors.push('Arquivo > 12 MB.');
+  return { ok: errors.length === 0, errors, warnings: [] };
 }
