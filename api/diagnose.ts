@@ -13,9 +13,12 @@ import {
   buildPreventivePlan,
   formatPreventiveForPrompt,
 } from './_lib/preventiveMaintenance.js';
+import {
+  findSystemUpdates,
+  formatSystemUpdatesForPrompt,
+} from './_lib/systemUpdates.js';
 
 export const config = { maxDuration: 60 };
-
 const REQUEST_TIMEOUT_MS = 50_000;
 
 type LiveObdReading = {
@@ -86,7 +89,6 @@ function liveObdHints(list?: LiveObdReading[]): string[] {
   const hints: string[] = [];
   const byId = Object.fromEntries(list.map((r) => [r.id, r]));
   const cool = byId.coolant?.value;
-  const iat = byId.iat?.value;
   const rpm = byId.rpm?.value;
   const stft = byId.stft_b1?.value;
   const volt = byId.voltage?.value;
@@ -95,8 +97,6 @@ function liveObdHints(list?: LiveObdReading[]): string[] {
     hints.push('ECT baixa com motor girando — termostato/ECT');
   if (stft != null && Math.abs(stft) > 15) hints.push('STFT fora de faixa — mistura irregular');
   if (volt != null && volt < 12.2) hints.push('Tensão do módulo baixa');
-  if (iat != null && cool != null && Math.abs(iat - cool) > 40 && rpm != null && rpm < 1000)
-    hints.push('IAT vs ECT com grande diferença em idle — validar sensores');
   return hints;
 }
 
@@ -105,6 +105,35 @@ function faultsFromLive(list?: LiveObdReading[]): FaultEvent[] {
   return evaluateFaultsSnapshot(
     list.map((r) => ({ id: r.id, value: r.value, unit: r.unit, ok: r.ok }))
   );
+}
+
+function attachSystemUpdates(p: Payload, data: Record<string, unknown>): Record<string, unknown> {
+  const advice = findSystemUpdates({
+    description: p.description,
+    make: p.make,
+    isEv: p.isEvAlternative,
+  });
+  if (!advice.campaigns.length) return data;
+  const checks = (data.correctiveChecklist as string[]) || [];
+  return {
+    ...data,
+    systemUpdates: {
+      campaigns: advice.campaigns.map((c) => ({
+        id: c.id,
+        title: c.title,
+        systems: c.systems,
+        severity: c.severity,
+        procedure: c.procedure,
+        notes: c.notes,
+        tools: c.tools,
+      })),
+      summaryLines: advice.summaryLines,
+    },
+    correctiveChecklist: Array.from(new Set([...advice.checklist.slice(0, 4), ...checks])).slice(
+      0,
+      12
+    ),
+  };
 }
 
 function attachPreventive(p: Payload, data: Record<string, unknown>): Record<string, unknown> {
@@ -184,9 +213,7 @@ function parseBody(body: unknown): { ok: true; payload: Payload } | { ok: false;
       clientId: b.clientId ? String(b.clientId) : undefined,
       liveObd,
       odometerKm:
-        b.odometerKm != null && b.odometerKm !== ''
-          ? Number(b.odometerKm)
-          : undefined,
+        b.odometerKm != null && b.odometerKm !== '' ? Number(b.odometerKm) : undefined,
     },
   };
 }
@@ -200,10 +227,15 @@ function buildPrompt(p: Payload, networkSummary: string): string {
     isEv: p.isEvAlternative,
     odometerKm: p.odometerKm,
   });
+  const sys = findSystemUpdates({
+    description: p.description,
+    make: p.make,
+    isEv: p.isEvAlternative,
+  });
   return [
     'Você é o consultor técnico da oficina OficIA.',
     'Escreva para o MECÂNICO: português claro, frases curtas e concretas.',
-    'Use OBD, faultEngine e manutenção preventiva. Não invente PIDs.',
+    'Use OBD, faultEngine, preventiva e atualização de sistemas. Não invente PIDs.',
     '',
     'VEÍCULO:',
     '- Placa: ' + (p.plate || 'N/I'),
@@ -215,6 +247,7 @@ function buildPrompt(p: Payload, networkSummary: string): string {
     formatLiveObd(p.liveObd) || '- OBD ao vivo: não informado',
     formatFaultsForPrompt(faults) || '- faultEngine: sem eventos',
     formatPreventiveForPrompt(prev),
+    formatSystemUpdatesForPrompt(sys),
     '',
     'EVIDÊNCIA DA REDE/OBD:',
     networkSummary || 'Sem evidência nesta execução.',
@@ -248,10 +281,10 @@ function localFallback(p: Payload): Record<string, unknown> {
       diagnosticNotes:
         (liveBlock ? liveBlock + '\n\n' : '') +
         (faultBlock ? faultBlock + '\n\n' : '') +
-        '1. Avisos na multimídia.\n2. Isolamento HV.\n3. Bateria 12V e HVIL.',
+        '1. Avisos multimídia.\n2. Isolamento HV.\n3. Bateria 12V e HVIL.',
       resetProcedure: '1. Negativo 12V.\n2. MSD com EPI.\n3. Aguardar 10 min.',
       correctiveChecklist: ['Medir isolamento HV', 'Desbalanceamento de células', 'Testar HVIL', 'Bateria 12V'],
-      preventiveChecklist: ['Carga AC semanal', 'Filtro de cabine no prazo'],
+      preventiveChecklist: ['Carga AC semanal'],
       budgetItems: [{ item: 'Diagnóstico EV', category: 'Mão de Obra', estimatedCost: 450 }],
       faultEvents,
     };
@@ -273,14 +306,8 @@ function localFallback(p: Payload): Record<string, unknown> {
         'P0300: combustão irregular. Causas: bobinas, velas, cabos, bicos, pressão, ar falso, compressão.' +
         (liveHints.length ? '\n' + liveHints.join('\n') : ''),
       resetProcedure: '1. Freeze frame.\n2. Bobinas e velas.\n3. Pressão e vácuo.\n4. Corrigir, apagar, testar.',
-      correctiveChecklist: [
-        ...fHints,
-        'Confirmar P0300 e P0301–P0304',
-        'Velas e bobinas',
-        'Pressão da bomba',
-        'Ar falso',
-      ].slice(0, 10),
-      preventiveChecklist: ['Velas no intervalo', 'Filtro de ar no prazo'],
+      correctiveChecklist: [...fHints, 'Confirmar P0300', 'Velas e bobinas', 'Pressão da bomba'].slice(0, 10),
+      preventiveChecklist: ['Velas no intervalo'],
       budgetItems: [
         { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 220 },
         { item: 'Jogo de velas (estimativa)', category: 'Peça', estimatedCost: 180 },
@@ -302,28 +329,18 @@ function localFallback(p: Payload): Record<string, unknown> {
     codeType: 'SCANNER_OBD2',
     codeTypeLabel: 'Diagnóstico OBD2',
     originBadge: faultEvents.length ? 'faultEngine + OBD' : liveBlock ? 'OBD ao vivo' : 'Laudo de oficina',
-    originExplanation: 'Regras + PIDs + preventiva + fontes públicas.',
+    originExplanation: 'Regras + PIDs + preventiva + atualização de sistemas.',
     problemName: problem,
     supplierCategory: 'Powertrain / Elétrica',
-    severity:
-      faultEvents.some((e) => e.severity === 'high') || liveHints.some((h) => /superaquec|tensão baixa/i.test(h))
-        ? 'Alta'
-        : 'Média',
+    severity: faultEvents.some((e) => e.severity === 'high') ? 'Alta' : 'Média',
     source: 'OficIA (local)',
     diagnosticNotes:
       (liveBlock ? liveBlock + '\n\n' : '') +
       (faultBlock ? faultBlock + '\n\n' : '') +
-      (liveHints.length ? liveHints.join('\n') + '\n\n' : '') +
       '1. Confirmar código.\n2. Bateria e massas.\n3. Chicotes e conectores.',
     resetProcedure: '1. Registrar e apagar.\n2. Rodagem.\n3. Verificar se retorna.',
-    correctiveChecklist: [
-      ...fHints,
-      ...liveHints,
-      'Ler códigos OBD2',
-      'Tensão da bateria',
-      'Conectores e massas',
-    ].slice(0, 10),
-    preventiveChecklist: ['Revisões no prazo', 'Óleo e filtros conforme uso'],
+    correctiveChecklist: [...fHints, ...liveHints, 'Ler códigos OBD2', 'Tensão da bateria'].slice(0, 10),
+    preventiveChecklist: ['Revisões no prazo'],
     budgetItems: [
       { item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 },
       { item: 'Mão de obra de reparo', category: 'Mão de Obra', estimatedCost: 200 },
@@ -424,7 +441,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         40_000
       );
     } catch (err: any) {
-      console.error('[diagnose] network', err?.message || err);
       network.summary = 'Rede indisponível: ' + String(err?.message || err).slice(0, 150);
     }
 
@@ -434,13 +450,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const modelUsed = parsed._model;
         delete parsed._model;
         const data = mergeNetworkIntoDiagnosis(
-          attachPreventive(
+          attachSystemUpdates(
             payload,
-            Object.assign({}, parsed, {
-              source: 'OficIA / Gemini + faultEngine + OBD + preventiva',
-              liveObd: payload.liveObd,
-              faultEvents,
-            })
+            attachPreventive(
+              payload,
+              Object.assign({}, parsed, {
+                source: 'OficIA / Gemini + sistemas + OBD + preventiva',
+                liveObd: payload.liveObd,
+                faultEvents,
+              })
+            )
           ),
           network
         );
@@ -453,7 +472,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             hasOpenLaborKey: hasOlp,
             liveObdCount: payload.liveObd?.length || 0,
             faultCount: faultEvents.length,
-            networkGrounded: network.grounded,
             latencyMs: Date.now() - startedAt,
           },
         });
@@ -461,12 +479,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = mergeNetworkIntoDiagnosis(
-      attachPreventive(
+      attachSystemUpdates(
         payload,
-        Object.assign({}, localFallback(payload), {
-          liveObd: payload.liveObd,
-          faultEvents,
-        })
+        attachPreventive(
+          payload,
+          Object.assign({}, localFallback(payload), {
+            liveObd: payload.liveObd,
+            faultEvents,
+          })
+        )
       ),
       network
     );
@@ -478,28 +499,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         hasOpenLaborKey: hasOlp,
         liveObdCount: payload.liveObd?.length || 0,
         faultCount: faultEvents.length,
-        networkGrounded: network.grounded,
         latencyMs: Date.now() - startedAt,
       },
     });
   } catch (err: any) {
-    console.error('[diagnose] fatal', err);
     return res.status(200).json({
       ok: true,
       data: {
         problemName: 'Diagnóstico local (safe mode)',
         severity: 'Média',
         diagnosticNotes: 'Erro interno: ' + String(err?.message || err).slice(0, 200),
-        correctiveChecklist: ['Repetir diagnóstico', 'Confirmar no scanner'],
+        correctiveChecklist: ['Repetir diagnóstico'],
         budgetItems: [{ item: 'Diagnóstico eletrônico', category: 'Mão de Obra', estimatedCost: 180 }],
         source: 'OficIA (safe)',
       },
-      meta: {
-        source: 'safe-mode',
-        hasOpenLaborKey: hasOlp,
-        error: String(err?.message || err).slice(0, 200),
-        latencyMs: Date.now() - startedAt,
-      },
+      meta: { source: 'safe-mode', latencyMs: Date.now() - startedAt },
     });
   }
 }
