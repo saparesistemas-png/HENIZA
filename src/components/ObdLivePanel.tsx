@@ -17,6 +17,7 @@ import {
   PID_DEFS,
   PidId,
 } from '../services/obdLive';
+import { severityLabelPt } from '../services/faultEngine';
 
 type Props = {
   setSuccessToast: (msg: string | null) => void;
@@ -49,7 +50,11 @@ function formatValue(v: number | null | undefined, unit: string) {
   return `${n} ${unit}`;
 }
 
-export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onRequestDiagnosis }: Props) {
+export default function ObdLivePanel({
+  setSuccessToast,
+  onInjectSymptom,
+  onRequestDiagnosis,
+}: Props) {
   const session = useMemo(() => getObdLiveSession(), []);
   const [snap, setSnap] = useState<ObdLiveSnapshot>(() => session.snapshot());
   const [open, setOpen] = useState(false);
@@ -75,7 +80,7 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
     session.startSimulator();
     session.startPolling();
     setOpen(true);
-    setSuccessToast('Simulador OBD ativo — valores demonstrativos.');
+    setSuccessToast('Simulador OBD ativo.');
   };
 
   const startPoll = () => {
@@ -99,15 +104,13 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
   };
 
   const inject = () => {
-    const hint = session.buildSymptomHint();
-    onInjectSymptom?.(hint);
-    setSuccessToast('Leituras OBD enviadas ao campo de sintomas.');
+    onInjectSymptom?.(session.buildSymptomHint());
+    setSuccessToast('Leituras OBD enviadas ao relato.');
   };
 
   const diagnoseWithAi = () => {
-    const hint = session.buildSymptomHint();
-    onInjectSymptom?.(hint);
-    setSuccessToast('Enviando OBD + relato para a IA…');
+    onInjectSymptom?.(session.buildSymptomHint());
+    setSuccessToast('Enviando OBD + regras para a IA…');
     setTimeout(() => onRequestDiagnosis?.(), 50);
   };
 
@@ -133,9 +136,6 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
               <p className={`text-sm font-black mt-1 ${hot ? 'text-red-300' : 'text-white'}`}>
                 {formatValue(sample?.value, def?.unit || '')}
               </p>
-              {!sample?.ok && sample?.error && (
-                <p className="text-[9px] text-amber-400/80 mt-0.5">{sample.error}</p>
-              )}
             </div>
           );
         })}
@@ -157,7 +157,9 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
             <p className="text-[10px] text-slate-400">
               {stateLabel(snap.state)}
               {snap.deviceName ? ` · ${snap.deviceName}` : ''}
-              {!bleOk ? ' · Bluetooth web indisponível neste navegador' : ''}
+              {(snap.faults?.length ?? 0) > 0
+                ? ` · ${snap.faults!.length} falha(s)`
+                : ''}
             </p>
           </div>
         </div>
@@ -167,8 +169,8 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
       {open && (
         <div className="px-4 pb-4 space-y-4 border-t border-tech-borda/60 pt-3">
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Conecte um <strong className="text-slate-200">ELM327 BLE</strong> ou use o simulador. Depois clique em{' '}
-            <strong className="text-slate-200">Diagnosticar com IA</strong> para cruzar os PIDs com o laudo.
+            PIDs + <strong className="text-slate-200">faultEngine</strong> (limiar, histerese,
+            correlação). Use o simulador ou ELM327 BLE e depois Diagnosticar com IA.
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -219,8 +221,7 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
                 </button>
                 {onRequestDiagnosis && (
                   <button
-                    type="button"
-                    onClick={diagnoseWithAi}
+                    type="button"rella onClick={diagnoseWithAi}
                     className="px-3 py-2 rounded-xl bg-tech-destaque text-tech-fundo text-[11px] font-black"
                   >
                     Diagnosticar com IA
@@ -246,19 +247,37 @@ export default function ObdLivePanel({ setSuccessToast, onInjectSymptom, onReque
             </p>
           )}
 
+          {(snap.faults?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-wider text-red-300/90">
+                Motor de regras — falhas ativas
+              </p>
+              <ul className="space-y-1.5">
+                {snap.faults!.map((f) => (
+                  <li
+                    key={f.id}
+                    className={`rounded-lg border px-3 py-2 text-[11px] ${
+                      f.severity === 'high'
+                        ? 'border-red-500/40 bg-red-500/10 text-red-100'
+                        : f.severity === 'medium'
+                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+                          : 'border-slate-500/40 bg-slate-500/10 text-slate-200'
+                    }`}
+                  >
+                    <span className="font-black">
+                      [{severityLabelPt(f.severity)}] {f.title}
+                    </span>
+                    <span className="text-slate-400"> — {f.message}</span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{f.rule}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {renderGroup('Temperaturas', tempPids, <Thermometer className="w-3 h-3 text-cyan-400" />)}
           {renderGroup('Motor', motorPids, <Gauge className="w-3 h-3 text-tech-destaque" />)}
           {renderGroup('Mistura / combustível', fuelPids, <Zap className="w-3 h-3 text-amber-400" />)}
-
-          {snap.samples.voltage && (
-            <p className="text-[11px] text-slate-400">
-              Tensão módulo:{' '}
-              <span className="text-white font-bold">
-                {formatValue(snap.samples.voltage.value, 'V')}
-              </span>
-              {snap.protocol ? ` · ${snap.protocol}` : ''}
-            </p>
-          )}
         </div>
       )}
     </section>
