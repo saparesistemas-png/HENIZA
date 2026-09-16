@@ -1,13 +1,22 @@
 /**
- * POST /api/sync — recebe itens da outbox Dexie (CASE_UPSERT, PHOTO_UPLOAD, ...).
+ * POST /api/sync — outbox Dexie → Postgres (cases) + feed
+ * GET  /api/sync?pull=1&since=ISO — pull de OS alteradas
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { authFromRequest } from './_lib/authTokens';
 import { publishFeedEvent } from './_lib/realtimeStore';
+import { upsertCase, listCasesSince, caseCount } from './_lib/caseStore';
+import { isPostgresEnabled } from './_lib/pg';
 
-const memoryCases = new Map<string, unknown>();
-const memoryPhotos: Array<{ caseId: string; slotId: string; at: string }> = [];
-const seenKeys = new Set<string>();
+declare global {
+  // eslint-disable-next-line no-var
+  var __henizaSyncIdem: Set<string> | undefined;
+}
+
+function seenKeys(): Set<string> {
+  if (!global.__henizaSyncIdem) global.__henizaSyncIdem = new Set();
+  return global.__henizaSyncIdem;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,11 +26,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
 
   if (req.method === 'GET') {
+    if (String(req.query.pull || '') === '1') {
+      const since = String(req.query.since || '');
+      const cases = await listCasesSince(since || undefined, 80);
+      return res.status(200).json({
+        ok: true,
+        cases,
+        storage: isPostgresEnabled() ? 'postgres' : 'memory',
+        serverTime: new Date().toISOString(),
+      });
+    }
     return res.status(200).json({
       ok: true,
       service: 'heniza-sync',
-      cases: memoryCases.size,
-      photos: memoryPhotos.length,
+      cases: await caseCount(),
+      storage: isPostgresEnabled() ? 'postgres' : 'memory',
     });
   }
 
@@ -37,27 +56,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const payload = body.payload;
     const user = authFromRequest(req);
 
-    if (idempotencyKey && seenKeys.has(idempotencyKey)) {
+    const keys = seenKeys();
+    if (idempotencyKey && keys.has(idempotencyKey)) {
       return res.status(200).json({ ok: true, deduped: true });
     }
     if (idempotencyKey) {
-      seenKeys.add(idempotencyKey);
-      if (seenKeys.size > 5000) {
-        const first = seenKeys.values().next().value;
-        if (first) seenKeys.delete(first);
+      keys.add(idempotencyKey);
+      if (keys.size > 5000) {
+        const first = keys.values().next().value;
+        if (first) keys.delete(first);
       }
     }
 
     if (type === 'CASE_UPSERT') {
       const c = payload?.case || payload;
-      const id = c?.id || body.clientId;
-      if (id) memoryCases.set(String(id), { ...c, deviceId: body.deviceId, syncedAt: new Date().toISOString() });
+      const id = String(c?.id || body.clientId || '');
+      if (!id) return res.status(400).json({ ok: false, error: 'case id missing' });
+
+      const result = await upsertCase({
+        id,
+        plate: c?.plate,
+        chassis: c?.chassis,
+        make: c?.make,
+        model: c?.model,
+        currentStage: c?.currentStage,
+        rev: payload?.rev ?? c?.rev,
+        snapshot: c,
+        deviceId: body.deviceId,
+      });
+
+      if (result.conflict) {
+        return res.status(409).json({
+          ok: false,
+          conflict: true,
+          serverCase: result.case,
+          serverRev: result.serverRev,
+        });
+      }
+
       try {
-        publishFeedEvent({
+        await publishFeedEvent({
           type: 'case',
           plate: c?.plate,
           chassis: c?.chassis,
-          caseId: String(id || ''),
+          caseId: id,
           title: `OS ${id} · ${c?.currentStage || 'atualizada'}`,
           body: `${c?.make || ''} ${c?.model || ''}`.trim(),
           authorId: user?.sub,
@@ -66,31 +108,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch {
         /* */
       }
-      return res.status(200).json({ ok: true, id });
+
+      return res.status(200).json({
+        ok: true,
+        id,
+        serverRev: result.serverRev,
+        storage: isPostgresEnabled() ? 'postgres' : 'memory',
+      });
     }
 
     if (type === 'PHOTO_UPLOAD') {
-      memoryPhotos.push({
-        caseId: String(payload?.caseId || ''),
-        slotId: String(payload?.slotId || ''),
-        at: new Date().toISOString(),
-      });
+      // Metadados only — blob fica no cliente (OPFS). Opcional: object storage depois.
+      try {
+        await publishFeedEvent({
+          type: 'photo',
+          caseId: String(payload?.caseId || ''),
+          title: `Foto ${payload?.slotId || ''} · OS ${payload?.caseId || ''}`,
+          authorId: user?.sub,
+          authorName: user?.name,
+        });
+      } catch {
+        /* */
+      }
       return res.status(200).json({
         ok: true,
         photoId: payload?.photoId,
         received: true,
+        note: 'metadata ack — blob em OPFS no dispositivo',
       });
     }
 
     if (type === 'DIAGNOSIS_ENRICH' || type === 'diagnosis') {
-      return res.status(200).json({ ok: true, note: 'diagnosis accepted for enrichment queue' });
+      return res.status(200).json({ ok: true, note: 'diagnosis accepted' });
     }
 
-    if (type === 'BUDGET_CONFIRM' || type === 'budget' || type === 'ERP_MANIFEST') {
-      return res.status(200).json({ ok: true });
-    }
-
-    if (type === 'stock' || type === 'history') {
+    if (
+      type === 'BUDGET_CONFIRM' ||
+      type === 'budget' ||
+      type === 'ERP_MANIFEST' ||
+      type === 'stock' ||
+      type === 'history'
+    ) {
       return res.status(200).json({ ok: true });
     }
 
