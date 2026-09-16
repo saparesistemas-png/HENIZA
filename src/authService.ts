@@ -1,4 +1,4 @@
-// Secure authentication — Web Crypto, no plaintext passwords in source
+// Secure authentication — Web Crypto local + login online JWT
 
 export type UserRole = 'Administrador' | 'Técnico Especialista' | 'Operador de Oficina';
 export type UserStatus = 'aprovado' | 'pendente' | 'recusado';
@@ -139,11 +139,36 @@ export async function requestRegistration(data: {
 export async function authenticateUser(
   email: string,
   password: string
-): Promise<{ success: boolean; message: string; user?: AuthUser }> {
+): Promise<{ success: boolean; message: string; user?: AuthUser; online?: boolean }> {
+  // 1) Login online (JWT)
+  try {
+    const { loginOnline } = await import('./services/onlineSession');
+    const online = await loginOnline(email, password);
+    if (online.ok && online.user) {
+      const sessionUser: AuthUser = {
+        id: online.user.id,
+        name: online.user.name,
+        email: online.user.email,
+        role: online.user.role as UserRole,
+        workshop: online.user.workshop,
+        isAdmin: online.user.isAdmin,
+      };
+      saveSession(sessionUser);
+      return {
+        success: true,
+        message: 'Login online autenticado.',
+        user: sessionUser,
+        online: true,
+      };
+    }
+  } catch {
+    /* fallback local */
+  }
+
   const users = loadUsers();
   const normalized = email.trim().toLowerCase();
   const matched = users.find((u) => u.email === normalized);
-  if (!matched) return { success: false, message: 'Usuário não encontrado.' };
+  if (!matched) return { success: false, message: 'Usuário não encontrado (online e local).' };
   const valid = await verifyPassword(password.trim(), matched.salt, matched.passwordHash);
   if (!valid) return { success: false, message: 'Senha incorreta.' };
   if (matched.status === 'pendente') return { success: false, message: 'Cadastro pendente de aprovação.' };
@@ -157,56 +182,28 @@ export async function authenticateUser(
     isAdmin: matched.isAdmin,
   };
   saveSession(sessionUser);
-  return { success: true, message: `Bem-vindo, ${matched.name}!`, user: sessionUser };
+  return { success: true, message: 'Login local (offline).', user: sessionUser, online: false };
 }
 
-export function setRequestStatus(userId: string, newStatus: 'aprovado' | 'recusado'): { success: boolean } {
-  const users = loadUsers();
-  const index = users.findIndex((u) => u.id === userId);
-  if (index === -1) return { success: false };
-  users[index].status = newStatus;
-  users[index].reviewedAt = new Date().toISOString();
-  saveUsers(users);
-  return { success: true };
-}
-
-export function deleteUserRequest(userId: string): boolean {
-  saveUsers(loadUsers().filter((u) => u.id !== userId));
-  return true;
-}
-
-export function logout(): void {
+export function clearAuthSession(): void {
   saveSession(null);
+  try {
+    void import('./services/onlineSession').then((m) => m.clearOnlineSession());
+  } catch {
+    /* */
+  }
 }
 
-export async function migrateFromLegacyIfNeeded(): Promise<void> {
-  const legacyKey = 'oficia_system_users';
-  const legacyRaw = localStorage.getItem(legacyKey);
-  if (!legacyRaw) return;
-  try {
-    const legacyUsers = JSON.parse(legacyRaw);
-    const current = loadUsers();
-    for (const old of legacyUsers) {
-      if (current.some((u) => u.email === old.email?.toLowerCase())) continue;
-      if (!old.password) continue;
-      const salt = await generateSalt();
-      const passwordHash = await hashPassword(old.password, salt);
-      current.push({
-        id: old.id || 'migrated-' + Date.now(),
-        name: old.name,
-        email: old.email.toLowerCase(),
-        passwordHash,
-        salt,
-        workshop: old.workshop,
-        role: old.role || 'Técnico Especialista',
-        status: old.status || 'aprovado',
-        requestedAt: old.requestedAt || new Date().toISOString(),
-        isAdmin: old.isAdmin || false,
-      });
-    }
-    saveUsers(current);
-    localStorage.removeItem(legacyKey);
-  } catch (err) {
-    console.error('[HENIZA] Migration failed:', err);
-  }
+export async function reviewUserRequest(
+  userId: string,
+  approve: boolean,
+  role?: UserRole
+): Promise<void> {
+  const users = loadUsers();
+  const idx = users.findIndex((u) => u.id === userId);
+  if (idx < 0) return;
+  users[idx].status = approve ? 'aprovado' : 'recusado';
+  users[idx].reviewedAt = new Date().toISOString();
+  if (approve && role) users[idx].role = role;
+  saveUsers(users);
 }
