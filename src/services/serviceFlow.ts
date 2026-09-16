@@ -1,7 +1,7 @@
 /**
  * Fluxo de OS: Entrada → Diagnóstico → Serviço → Conclusão → Saída
  * Cada etapa exige evidências fotográficas no padrão definido.
- * Sem checklist completo, não avança.
+ * Sem checklist completo + validação de imagem, não avança.
  */
 
 export type FlowStage =
@@ -17,10 +17,8 @@ export type PhotoSlotId = string;
 export type PhotoSlotDef = {
   id: PhotoSlotId;
   label: string;
-  /** Instrução do padrão visual obrigatório */
   pattern: string;
   required: boolean;
-  /** Dicas de enquadramento */
   framing: string;
 };
 
@@ -29,6 +27,14 @@ export type PhotoEvidence = {
   dataUrl: string;
   capturedAt: string;
   note?: string;
+  validation?: {
+    ok: boolean;
+    width?: number;
+    height?: number;
+    brightness?: number;
+    sharpness?: number;
+    errors?: string[];
+  };
 };
 
 export type StageRecord = {
@@ -74,7 +80,6 @@ export const STAGE_LABELS: Record<FlowStage, string> = {
   finalizado: 'Finalizado',
 };
 
-/** Padrões obrigatórios de foto por etapa (não avançar sem cumprir). */
 export const PHOTO_SLOTS: Record<Exclude<FlowStage, 'finalizado'>, PhotoSlotDef[]> = {
   entrada: [
     {
@@ -122,7 +127,7 @@ export const PHOTO_SLOTS: Record<Exclude<FlowStage, 'finalizado'>, PhotoSlotDef[
     {
       id: 'ent_avaria',
       label: 'Avaria / detalhe (se houver)',
-      pattern: 'Close da avaria com referência de escala (mão ou ferramenta)',
+      pattern: 'Close da avaria com referência de escala',
       required: false,
       framing: 'Foco na área danificada',
     },
@@ -131,9 +136,9 @@ export const PHOTO_SLOTS: Record<Exclude<FlowStage, 'finalizado'>, PhotoSlotDef[
     {
       id: 'diag_scanner',
       label: 'Tela do scanner / códigos',
-      pattern: 'Display do scanner com códigos DTC legíveis ou print do OficIA',
+      pattern: 'Display do scanner com códigos DTC legíveis',
       required: true,
-      framing: 'Sem corte no código; data/hora se possível',
+      framing: 'Sem corte no código',
     },
     {
       id: 'diag_compartimento',
@@ -156,12 +161,12 @@ export const PHOTO_SLOTS: Record<Exclude<FlowStage, 'finalizado'>, PhotoSlotDef[
       label: 'Antes da intervenção',
       pattern: 'Área de trabalho antes da troca/reparo',
       required: true,
-      framing: 'Mesmo ângulo que será usado no “depois”',
+      framing: 'Mesmo ângulo do “depois”',
     },
     {
       id: 'srv_peca',
       label: 'Peça / material',
-      pattern: 'Peça nova ou material com identificação (etiqueta se houver)',
+      pattern: 'Peça nova ou material com identificação',
       required: true,
       framing: 'Close legível',
     },
@@ -177,14 +182,14 @@ export const PHOTO_SLOTS: Record<Exclude<FlowStage, 'finalizado'>, PhotoSlotDef[
     {
       id: 'conc_scanner_ok',
       label: 'Scanner pós-reparo',
-      pattern: 'Tela sem códigos pendentes ou com status “pass” / monitor ready',
+      pattern: 'Tela sem códigos pendentes ou status pass',
       required: true,
       framing: 'Códigos/status legíveis',
     },
     {
       id: 'conc_teste',
       label: 'Evidência de teste',
-      pattern: 'Teste em bancada, rodagem ou função (ex.: ventoinha, marcha)',
+      pattern: 'Teste em bancada, rodagem ou função',
       required: true,
       framing: 'Mostrar resultado do teste',
     },
@@ -236,7 +241,6 @@ export type StageValidation = {
   message: string;
 };
 
-/** Valida se a etapa pode ser concluída (fotos obrigatórias presentes). */
 export function validateStagePhotos(
   stage: FlowStage,
   photos: PhotoEvidence[]
@@ -245,18 +249,19 @@ export function validateStagePhotos(
     return { ok: true, missing: [], message: 'Fluxo finalizado.' };
   }
   const required = getRequiredSlots(stage);
-  const have = new Set(photos.map((p) => p.slotId));
-  const missing = required.filter((s) => !have.has(s.id) || !photos.find((p) => p.slotId === s.id)?.dataUrl);
+  const missing = required.filter((s) => {
+    const p = photos.find((x) => x.slotId === s.id);
+    return !p?.dataUrl;
+  });
   if (missing.length) {
     return {
       ok: false,
       missing,
-      message: `Padrão fotográfico incompleto: faltam ${missing.length} foto(s) obrigatória(s) — ${missing
+      message: `Padrão fotográfico incompleto: faltam ${missing.length} foto(s) — ${missing
         .map((m) => m.label)
         .join(', ')}. O sistema não avança.`,
     };
   }
-  // validar dataUrl mínima
   for (const p of photos) {
     if (p.dataUrl && !p.dataUrl.startsWith('data:image')) {
       return {
@@ -266,7 +271,20 @@ export function validateStagePhotos(
       };
     }
   }
-  return { ok: true, missing: [], message: 'Evidências no padrão. Pode avançar.' };
+  const requiredIds = new Set(required.map((s) => s.id));
+  const notValidated = required.filter((s) => {
+    const p = photos.find((x) => x.slotId === s.id);
+    return !p?.validation?.ok;
+  });
+  if (notValidated.length) {
+    return {
+      ok: false,
+      missing: notValidated,
+      message:
+        'Há fotos obrigatórias sem validação aprovada (resolução, nitidez ou brilho). Refaça até o sistema aceitar.',
+    };
+  }
+  return { ok: true, missing: [], message: 'Evidências validadas. Pode avançar.' };
 }
 
 export function createCase(input: {
@@ -301,7 +319,8 @@ export function upsertPhoto(
   stage: FlowStage,
   slotId: string,
   dataUrl: string,
-  note?: string
+  note?: string,
+  validation?: PhotoEvidence['validation']
 ): ServiceFlowCase {
   const rec =
     c.stages[stage] ||
@@ -312,6 +331,7 @@ export function upsertPhoto(
     dataUrl,
     capturedAt: new Date().toISOString(),
     note,
+    validation,
   });
   return {
     ...c,
@@ -331,7 +351,6 @@ export function setStageNotes(c: ServiceFlowCase, stage: FlowStage, notes: strin
   };
 }
 
-/** Tenta avançar; retorna erro se padrão fotográfico não cumprido. */
 export function tryAdvance(
   c: ServiceFlowCase,
   extra?: { diagnosisSnapshot?: Record<string, unknown>; budgetTotal?: number }
@@ -340,28 +359,20 @@ export function tryAdvance(
   if (stage === 'finalizado') {
     return { ok: false, message: 'OS já finalizada.', missing: [] };
   }
-
   const rec = c.stages[stage] || { stage, photos: [], notes: '' };
   const validation = validateStagePhotos(stage, rec.photos || []);
   if (!validation.ok) {
     return { ok: false, message: validation.message, missing: validation.missing };
   }
-
-  // Regras extras entre etapas
   if (stage === 'diagnostico' && !c.diagnosisSnapshot && !extra?.diagnosisSnapshot) {
     return {
       ok: false,
-      message:
-        'Vincule um laudo OficIA (rode o diagnóstico com IA) antes de avançar para o serviço.',
+      message: 'Vincule um laudo OficIA antes de avançar para o serviço.',
       missing: [],
     };
   }
-
   const nxt = nextStage(stage);
-  if (!nxt) {
-    return { ok: false, message: 'Não há próxima etapa.', missing: [] };
-  }
-
+  if (!nxt) return { ok: false, message: 'Não há próxima etapa.', missing: [] };
   const now = new Date().toISOString();
   const completed: StageRecord = {
     ...rec,
@@ -369,26 +380,25 @@ export function tryAdvance(
     photos: rec.photos || [],
     notes: rec.notes || '',
   };
-
   let nextRec = c.stages[nxt];
   if (!nextRec && nxt !== 'finalizado') {
     nextRec = { stage: nxt, startedAt: now, photos: [], notes: '' };
   }
-
-  const updated: ServiceFlowCase = {
-    ...c,
-    currentStage: nxt,
-    stages: {
-      ...c.stages,
-      [stage]: completed,
-      ...(nxt !== 'finalizado' && nextRec ? { [nxt]: nextRec } : {}),
+  return {
+    ok: true,
+    case: {
+      ...c,
+      currentStage: nxt,
+      stages: {
+        ...c.stages,
+        [stage]: completed,
+        ...(nxt !== 'finalizado' && nextRec ? { [nxt]: nextRec } : {}),
+      },
+      diagnosisSnapshot: extra?.diagnosisSnapshot ?? c.diagnosisSnapshot,
+      budgetTotal: extra?.budgetTotal ?? c.budgetTotal,
+      updatedAt: now,
     },
-    diagnosisSnapshot: extra?.diagnosisSnapshot ?? c.diagnosisSnapshot,
-    budgetTotal: extra?.budgetTotal ?? c.budgetTotal,
-    updatedAt: now,
   };
-
-  return { ok: true, case: updated };
 }
 
 export function evidenceManifest(c: ServiceFlowCase) {
@@ -398,6 +408,7 @@ export function evidenceManifest(c: ServiceFlowCase) {
     label: string;
     required: boolean;
     hasPhoto: boolean;
+    validated?: boolean;
     capturedAt?: string;
   }> = [];
   for (const st of STAGE_ORDER) {
@@ -412,6 +423,7 @@ export function evidenceManifest(c: ServiceFlowCase) {
         label: s.label,
         required: s.required,
         hasPhoto: Boolean(p?.dataUrl),
+        validated: Boolean(p?.validation?.ok),
         capturedAt: p?.capturedAt,
       });
     }
@@ -440,9 +452,14 @@ export function saveCase(c: ServiceFlowCase) {
 
 export function exportCasePayload(c: ServiceFlowCase) {
   return {
-    ...c,
+    id: c.id,
+    plate: c.plate,
+    chassis: c.chassis,
+    make: c.make,
+    model: c.model,
+    odometerKm: c.odometerKm,
+    currentStage: c.currentStage,
     evidenceManifest: evidenceManifest(c),
-    // não reexporta dataUrls enormes no JSON de integração — só flags
     stagesLight: Object.fromEntries(
       Object.entries(c.stages).map(([k, v]) => [
         k,
@@ -452,7 +469,12 @@ export function exportCasePayload(c: ServiceFlowCase) {
           completedAt: v?.completedAt,
           notes: v?.notes,
           photoCount: v?.photos?.length || 0,
-          photoSlots: (v?.photos || []).map((p) => p.slotId),
+          photoSlots: (v?.photos || []).map((p) => ({
+            slotId: p.slotId,
+            validated: Boolean(p.validation?.ok),
+            width: p.validation?.width,
+            height: p.validation?.height,
+          })),
         },
       ])
     ),
