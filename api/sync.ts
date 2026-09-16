@@ -1,8 +1,9 @@
 /**
  * POST /api/sync — recebe itens da outbox Dexie (CASE_UPSERT, PHOTO_UPLOAD, ...).
- * Persistência em memória por instância (demo); trocar por Postgres/Blob em produção.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { authFromRequest } from './_lib/authTokens';
+import { publishFeedEvent } from './_lib/realtimeStore';
 
 const memoryCases = new Map<string, unknown>();
 const memoryPhotos: Array<{ caseId: string; slotId: string; at: string }> = [];
@@ -11,7 +12,7 @@ const seenKeys = new Set<string>();
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Idempotency-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Idempotency-Key, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
 
@@ -34,6 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const idempotencyKey =
       (req.headers['idempotency-key'] as string) || body.idempotencyKey || '';
     const payload = body.payload;
+    const user = authFromRequest(req);
 
     if (idempotencyKey && seenKeys.has(idempotencyKey)) {
       return res.status(200).json({ ok: true, deduped: true });
@@ -50,6 +52,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const c = payload?.case || payload;
       const id = c?.id || body.clientId;
       if (id) memoryCases.set(String(id), { ...c, deviceId: body.deviceId, syncedAt: new Date().toISOString() });
+      try {
+        publishFeedEvent({
+          type: 'case',
+          plate: c?.plate,
+          chassis: c?.chassis,
+          caseId: String(id || ''),
+          title: `OS ${id} · ${c?.currentStage || 'atualizada'}`,
+          body: `${c?.make || ''} ${c?.model || ''}`.trim(),
+          authorId: user?.sub,
+          authorName: user?.name,
+        });
+      } catch {
+        /* */
+      }
       return res.status(200).json({ ok: true, id });
     }
 
@@ -59,7 +75,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         slotId: String(payload?.slotId || ''),
         at: new Date().toISOString(),
       });
-      // não persistir dataUrl em memória de demo
       return res.status(200).json({
         ok: true,
         photoId: payload?.photoId,
