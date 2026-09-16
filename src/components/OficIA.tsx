@@ -10,6 +10,13 @@ import ObdLivePanel from './ObdLivePanel';
 import SystemUpdateModule from './SystemUpdateModule';
 import ServiceFlowPanel from './ServiceFlowPanel';
 import OutboxStatusBadge from './OutboxStatusBadge';
+import VehicleMemoryPanel from './VehicleMemoryPanel';
+import {
+  recordDiagnosisEvent,
+  buildMemoryHint,
+  updatePidBaselines,
+  touchVehicleProfile,
+} from '../services/vehicleMemory';
 import { getObdLiveSession, PID_DEFS } from '../services/obdLive';
 
 interface OficIAProps {
@@ -123,9 +130,33 @@ export default function OficIA({
         const descriptionBase =
           (fullQuery ||
             `Diagnóstico de rotina para ${currentMaker.name} ${selectedModelName}`) + kmPart;
+        const memoryHint = await buildMemoryHint(plate, chassis);
+        if (liveObd.length) {
+          void updatePidBaselines(
+            plate,
+            chassis,
+            liveObd.map((s: any) => ({
+              id: s.id,
+              name: s.name,
+              value: Number(s.value),
+              unit: s.unit,
+            }))
+          );
+        }
+        void touchVehicleProfile({
+          plate,
+          chassis,
+          make: currentMaker.name,
+          model: selectedModelName,
+          odometerKm: odometerKm ? Number(odometerKm) : undefined,
+        });
+
+        const descriptionMerged = [descriptionBase, liveHint, memoryHint]
+          .filter(Boolean)
+          .join('\n');
 
         const payload = {
-          description: liveHint ? `${descriptionBase}\n${liveHint}` : descriptionBase,
+          description: descriptionMerged,
           mode: attachedVideo
             ? 'video'
             : attachedImage
@@ -177,6 +208,19 @@ export default function OficIA({
 
       setAiResponse(rawData);
 
+      void recordDiagnosisEvent({
+        plate,
+        chassis,
+        make: currentMaker.name,
+        model: selectedModelName,
+        odometerKm: odometerKm ? Number(odometerKm) : undefined,
+        problemName: rawData.problemName,
+        severity: rawData.severity,
+        diagnosticNotes: rawData.diagnosticNotes,
+        symptomQuery: fullQuery,
+        source: rawData.source || 'OficIA',
+      });
+
       const shareText = [
         `OficIA — ${currentMaker.name} ${selectedModelName}`,
         `Placa: ${plate}`,
@@ -187,7 +231,7 @@ export default function OficIA({
         .filter(Boolean)
         .join('\n');
       setWhatsappShareUrl(`https://wa.me/?text=${encodeURIComponent(shareText)}`);
-      setSuccessToast('Laudo gerado. Amarrado ao fluxo OS na etapa Diagnóstico.');
+      setSuccessToast('Laudo gerado. Memória do veículo atualizada neste dispositivo.');
     } catch (err) {
       console.error(err);
       setSuccessToast('Erro ao gerar diagnóstico. Tente novamente.');
@@ -209,7 +253,7 @@ export default function OficIA({
                 Ofic<span className="text-tech-destaque">IA</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Fluxo OS · evidências · outbox Dexie
+                Fluxo OS · memória por placa/VIN · outbox
               </p>
             </div>
           </div>
@@ -279,6 +323,8 @@ export default function OficIA({
             </select>
           </label>
         </div>
+
+        <VehicleMemoryPanel plate={plate} chassis={chassis} />
 
         <ServiceFlowPanel
           plate={plate}
