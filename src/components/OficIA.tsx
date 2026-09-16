@@ -9,6 +9,7 @@ import DiagnosisResultFlow from './DiagnosisResultFlow';
 import ObdLivePanel from './ObdLivePanel';
 import SystemUpdateModule from './SystemUpdateModule';
 import ServiceFlowPanel from './ServiceFlowPanel';
+import OutboxStatusBadge from './OutboxStatusBadge';
 import { getObdLiveSession, PID_DEFS } from '../services/obdLive';
 
 interface OficIAProps {
@@ -198,18 +199,21 @@ export default function OficIA({
   return (
     <div className="space-y-4 sm:space-y-6 animate-fadeIn max-w-5xl mx-auto px-1 sm:px-0">
       <div className="bg-tech-cartao border border-tech-borda rounded-xl p-4 sm:p-5 shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-tech-fundo border border-tech-destaque/40 flex items-center justify-center text-tech-destaque">
-            <Wrench className="w-5 h-5" />
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-tech-fundo border border-tech-destaque/40 flex items-center justify-center text-tech-destaque">
+              <Wrench className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-white">
+                Ofic<span className="text-tech-destaque">IA</span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Fluxo OS · evidências · outbox Dexie
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-black text-white">
-              Ofic<span className="text-tech-destaque">IA</span>
-            </h2>
-            <p className="text-xs text-slate-400">
-              Fluxo OS · evidências · diagnóstico · preventiva
-            </p>
-          </div>
+          <OutboxStatusBadge />
         </div>
       </div>
 
