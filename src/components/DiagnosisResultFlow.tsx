@@ -16,35 +16,18 @@ type DiagnosisData = {
   problemName?: string;
   severity?: string;
   diagnosticNotes?: string;
-  resetProcedure?: string;
   originBadge?: string;
-  originExplanation?: string;
-  codeTypeLabel?: string;
   source?: string;
   correctiveChecklist?: string[];
-  preventiveChecklist?: string[];
   preventivePlan?: {
-    vehicleLabel?: string;
-    disclaimer?: string;
-    items?: Array<{
-      id?: string;
-      name: string;
-      category?: string;
-      intervalKm?: number;
-      intervalMonths?: number;
-      priority?: string;
-      dueReason?: string;
-      estimatedCostBrl?: number;
-    }>;
+    items?: Array<{ name: string; dueReason?: string }>;
   };
   budgetItems?: Array<{ item: string; category: string; estimatedCost: number }>;
   networkNotes?: string;
-  networkSources?: string[];
-  networkHits?: Array<{ title: string; url?: string; snippet?: string; kind?: string }>;
+  networkHits?: Array<{ title: string; url?: string; snippet?: string }>;
   mechanicOverride?: string;
   faultEvents?: Array<{ id: string; title: string; severity: string; message?: string }>;
   liveObd?: unknown[];
-  systemUpdateRecommendations?: unknown[];
 };
 
 type Props = {
@@ -107,27 +90,17 @@ export default function DiagnosisResultFlow({
   if (step === 'budget') {
     return (
       <section className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-5 space-y-4">
-        <button
-          type="button"
-          onClick={() => setStep('result')}
-          className="text-xs text-slate-400 flex items-center gap-1"
-        >
+        <button type="button" onClick={() => setStep('result')} className="text-xs text-slate-400 flex items-center gap-1">
           <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao laudo
         </button>
         <h3 className="text-sm font-black text-white">Orçamento sugerido</h3>
         <ul className="space-y-2">
           {budgetItems.map((b, i) => (
-            <li
-              key={i}
-              className="flex justify-between text-sm border border-tech-borda rounded-lg px-3 py-2"
-            >
+            <li key={i} className="flex justify-between text-sm border border-tech-borda rounded-lg px-3 py-2">
               <span className="text-slate-200">
-                {b.item}{' '}
-                <span className="text-[10px] text-slate-500">{b.category}</span>
+                {b.item} <span className="text-[10px] text-slate-500">{b.category}</span>
               </span>
-              <span className="text-tech-destaque font-bold">
-                R$ {Number(b.estimatedCost).toFixed(2)}
-              </span>
+              <span className="text-tech-destaque font-bold">R$ {Number(b.estimatedCost).toFixed(2)}</span>
             </li>
           ))}
         </ul>
@@ -149,11 +122,7 @@ export default function DiagnosisResultFlow({
   if (step === 'override') {
     return (
       <section className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-5 space-y-3">
-        <button
-          type="button"
-          onClick={() => setStep('result')}
-          className="text-xs text-slate-400 flex items-center gap-1"
-        >
+        <button type="button" onClick={() => setStep('result')} className="text-xs text-slate-400 flex items-center gap-1">
           <ArrowLeft className="w-3.5 h-3.5" /> Voltar
         </button>
         <h3 className="text-sm font-black text-white">Diagnóstico 2 — nota do profissional</h3>
@@ -184,55 +153,53 @@ export default function DiagnosisResultFlow({
       <section className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-5 space-y-3">
         <div className="flex items-center gap-2">
           <Wrench className="w-4 h-4 text-tech-destaque" />
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-wider text-tech-destaque">
-              1 · Diagnóstico da IA
-            </p>
-          </div>
-          <h3 className="text-base font-black text-white leading-snug">{data.problemName}</h3>
-          <p className="text-[11px] text-slate-400">
-            Gravidade: <span className="text-white font-bold">{severity}</span>
-            {data.originBadge ? ` · ${data.originBadge}` : ''}
+          <p className="text-[11px] font-black uppercase tracking-wider text-tech-destaque">
+            1 · Diagnóstico da IA × rede
           </p>
-          <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
-            {data.diagnosticNotes}
-          </p>
-          <ConfidenceLayers data={data} />
-          {(data.faultEvents?.length || 0) > 0 && (
-            <div className="text-[11px] space-y-1">
-              <p className="font-bold text-amber-200">Eventos do motor de regras</p>
-              {data.faultEvents!.map((f) => (
-                <p key={f.id} className="text-slate-300">
-                  [{f.severity}] {f.title}
-                  {f.message ? ` — ${f.message}` : ''}
-                </p>
-              ))}
-            </div>
-          )}
-          {(data.networkHits?.length || 0) > 0 && (
-            <div className="text-[11px] space-y-1 border-t border-tech-borda pt-2">
-              <p className="font-bold text-cyan-200">Informações da rede</p>
-              {data.networkHits!.slice(0, 5).map((h, i) => (
-                <p key={i} className="text-slate-400">
-                  • {h.title}
-                </p>
-              ))}
-            </div>
-          )}
-          {data.mechanicOverride && (
-            <p className="text-[11px] text-emerald-200 border border-emerald-500/30 rounded-lg p-2">
-              Profissional: {data.mechanicOverride}
-            </p>
-          )}
         </div>
+        <h3 className="text-base font-black text-white leading-snug">{data.problemName}</h3>
+        <p className="text-[11px] text-slate-400">
+          Gravidade: <span className="text-white font-bold">{severity}</span>
+          {data.originBadge ? ` · ${data.originBadge}` : ''}
+        </p>
+        <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{data.diagnosticNotes}</p>
+
+        <ConfidenceLayers data={data} />
+
+        {(data.faultEvents?.length || 0) > 0 && (
+          <div className="text-[11px] space-y-1">
+            <p className="font-bold text-amber-200">Eventos do motor de regras</p>
+            {data.faultEvents!.map((f) => (
+              <p key={f.id} className="text-slate-300">
+                [{f.severity}] {f.title}
+                {f.message ? ` — ${f.message}` : ''}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {(data.networkHits?.length || 0) > 0 && (
+          <div className="text-[11px] space-y-1 border-t border-tech-borda pt-2">
+            <p className="font-bold text-cyan-200">Informações da rede</p>
+            {data.networkHits!.slice(0, 5).map((h, i) => (
+              <p key={i} className="text-slate-400">
+                • {h.title}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {data.mechanicOverride && (
+          <p className="text-[11px] text-emerald-200 border border-emerald-500/30 rounded-lg p-2">
+            Profissional: {data.mechanicOverride}
+          </p>
+        )}
       </section>
 
       <section className="bg-tech-cartao border border-tech-borda rounded-2xl p-4 sm:p-5 space-y-3">
         <div className="flex items-center gap-2 text-amber-300">
           <AlertTriangle className="w-4 h-4" />
-          <p className="text-[11px] font-black uppercase tracking-wider">
-            2 · Verificação do mecânico
-          </p>
+          <p className="text-[11px] font-black uppercase tracking-wider">2 · Verificação do mecânico</p>
         </div>
         <ul className="space-y-1.5 text-sm text-slate-200">
           {(data.correctiveChecklist || ['Validar códigos no scanner', 'Confirmar massa e alimentação']).map(
