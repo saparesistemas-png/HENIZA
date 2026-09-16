@@ -9,6 +9,42 @@ import {
 } from '../db/henizaDb';
 
 const DTC_RE = /\b([PCBU][0-9A-F]{4})\b/gi;
+const MEMORY_ENDPOINT = '/api/history';
+
+async function remoteMemoryRequest(body: unknown): Promise<any | null> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
+  try {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 7000);
+    const response = await fetch(MEMORY_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    window.clearTimeout(timer);
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function pullRemoteMemory(plate: string, chassis: string): Promise<any | null> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
+  try {
+    const query = new URLSearchParams({ plate, chassis });
+    const response = await fetch(`${MEMORY_ENDPOINT}?${query.toString()}`, { signal: AbortSignal.timeout(7000) });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
+  const map = new Map(local.map((row) => [row.id, row]));
+  for (const row of remote) map.set(row.id, row);
+  return Array.from(map.values());
+}
 
 export function normalizePlate(plate: string): string {
   return (plate || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
@@ -76,6 +112,7 @@ export async function touchVehicleProfile(input: {
     row.visitCount = prev.visitCount + (gap > 6 * 3600 * 1000 ? 1 : 0);
   }
   await henizaDb.vehicleProfiles.put(row);
+  void remoteMemoryRequest({ plate: row.plate, chassis: row.chassis, profile: row });
   return row;
 }
 
@@ -120,7 +157,8 @@ export async function recordDiagnosisEvent(input: {
     source: input.source || 'OficIA',
     notes: input.diagnosticNotes?.slice(0, 500),
   };
-  await henizaDb.diagnosisEvents.add(event);
+  await henizaDb.diagnosisEvents.put(event);
+  void remoteMemoryRequest({ plate: event.plate, chassis: event.chassis, events: [event] });
 
   try {
     const { realtimeFeed } = await import('./realtimeFeed');
@@ -216,6 +254,27 @@ export async function getVehicleTimeline(
   const sorted = events.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
   const recurrence = await getCodeRecurrence(id);
   const baselines = await henizaDb.pidBaselines.where('vehicleId').equals(id).toArray();
+  const remote = await pullRemoteMemory(plate, chassis);
+  if (remote?.ok && remote.source === 'remote') {
+    if (remote.profile) {
+      await henizaDb.vehicleProfiles.put(remote.profile);
+    }
+    if (Array.isArray(remote.events)) {
+      await henizaDb.diagnosisEvents.bulkPut(remote.events);
+    }
+    if (Array.isArray(remote.baselines)) {
+      await henizaDb.pidBaselines.bulkPut(remote.baselines);
+    }
+    const mergedEvents = mergeById(sorted, Array.isArray(remote.events) ? remote.events : [])
+      .sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+    const mergedProfile = remote.profile || profile;
+    return {
+      profile: mergedProfile,
+      events: mergedEvents,
+      recurrence: await getCodeRecurrence(id),
+      baselines: mergeById(baselines, Array.isArray(remote.baselines) ? remote.baselines : []),
+    };
+  }
   return { profile, events: sorted, recurrence, baselines };
 }
 
@@ -273,6 +332,7 @@ export async function updatePidBaselines(
     await henizaDb.pidBaselines.put(row);
     out.push(row);
   }
+  if (out.length) void remoteMemoryRequest({ plate, chassis, baselines: out });
   return out;
 }
 

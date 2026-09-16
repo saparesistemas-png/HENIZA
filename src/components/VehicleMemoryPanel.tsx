@@ -20,6 +20,8 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
   const [recurrence, setRecurrence] = useState<CodeRecurrence[]>([]);
   const [baselines, setBaselines] = useState<PidBaselineRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
 
   const key = vehicleKey(plate, chassis);
 
@@ -32,16 +34,29 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getVehicleTimeline(plate, chassis, 15);
       setProfile(data.profile);
       setEvents(data.events);
       setRecurrence(data.recurrence);
       setBaselines(data.baselines);
+    } catch {
+      setLoadError('Não foi possível atualizar a memória remota. Os dados locais continuam disponíveis.');
     } finally {
       setLoading(false);
     }
   }, [plate, chassis, key]);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
   useEffect(() => {
     void load();
@@ -71,7 +86,7 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
               Memória do veículo
             </p>
             <p className="text-[10px] text-slate-400">
-              Histórico · reincidência · feed online
+              Histórico · reincidência · {online ? 'local + remoto' : 'modo offline'}
             </p>
           </div>
         </div>
@@ -94,6 +109,12 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
       {open && (
         <div className="px-4 pb-4 space-y-3 border-t border-tech-borda/60 pt-3">
           <RealtimeFeedPanel plate={plate} chassis={chassis} />
+
+          {loadError && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-2 text-[10px] text-amber-200">
+              {loadError}
+            </p>
+          )}
 
           {profile ? (
             <p className="text-[11px] text-slate-300">

@@ -1,6 +1,6 @@
 /**
  * Pool Postgres compartilhado (Vercel / serverless).
- * Usa DATABASE_URL ou POSTGRES_URL (Vercel Postgres / Neon / Supabase).
+ * Usa DATABASE_URL_2 como origem preferencial, com fallbacks compatíveis.
  */
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
@@ -11,6 +11,7 @@ declare global {
 
 export function getDatabaseUrl(): string | null {
   return (
+    process.env.DATABASE_URL_2 ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_PRISMA_URL ||
