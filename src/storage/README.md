@@ -1,31 +1,38 @@
-# StoragePort — camada de persistência local
+# StoragePort — Dexie e SQLite
 
-## Objetivo
+## Backends
 
-Isolar IndexedDB/Dexie atrás de uma porta para permitir, sem reescrever a UI:
+| `VITE_STORAGE_BACKEND` | Implementação | Persistência |
+|------------------------|---------------|--------------|
+| `dexie` (default) | IndexedDB via Dexie | IndexedDB |
+| `sqlite` | sql.js (SQLite WASM) | OPFS `heniza-sqlite/heniza-local.sqlite` |
 
-1. **Dexie** (atual) — PWA / WebView
-2. **SQLite WASM + OPFS** (futuro web)
-3. **Capacitor SQLite** (futuro APK)
+## Ativar SQLite
 
-## Uso
+No `.env` / Vercel (build do frontend):
 
-```ts
-import { getStorage } from '../storage';
-
-const storage = getStorage();
-await storage.enqueue({ type: 'CASE_UPSERT', payload: {...}, caseId: 'OS-1' });
-const profile = await storage.getVehicleProfile('PLT:ABC1D23');
+```env
+VITE_STORAGE_BACKEND=sqlite
 ```
 
-## Backend
+No boot do app (ex.: `main.tsx` ou `App.tsx`):
 
-| `VITE_STORAGE_BACKEND` | Implementação |
-|------------------------|---------------|
-| `dexie` (default) | `DexieStorage` |
-| `sqlite` | (placeholder → cai no Dexie até existir `SqliteStorage`) |
+```ts
+import { ensureStorage } from './storage';
 
-## O que migrar por último
+await ensureStorage();
+```
 
-- `flushOutbox` / circuit breaker podem continuar em `src/db/outbox.ts` e chamar `getStorage()` internamente.
-- Fotos: metadados via `StoragePort`; bytes via `opfsPhotos.ts`.
+Sem `ensureStorage()`, o primeiro `getStorage()` usa Dexie e troca para SQLite em background quando possível.
+
+## Dependência
+
+```bash
+npm install sql.js
+```
+
+Wasm carregado de CDN jsDelivr (`sql-wasm.wasm`). Offline total do motor SQLite exige empacotar o `.wasm` no `public/`.
+
+## Capacitor (futuro)
+
+No APK, preferir `@capacitor-community/sqlite` implementando o mesmo `StoragePort` — o schema em `sqliteSchema.ts` já é SQL padrão.
