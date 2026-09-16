@@ -2,7 +2,10 @@
  * Fluxo de OS: Entrada → Diagnóstico → Serviço → Conclusão → Saída
  * Cada etapa exige evidências fotográficas no padrão definido.
  * Sem checklist completo + validação de imagem, não avança.
+ * Persistência local + outbox Dexie (offline-first).
  */
+
+import { saveCaseLocal, savePhotoLocal } from '../db/outbox';
 
 export type FlowStage =
   | 'entrada'
@@ -271,7 +274,6 @@ export function validateStagePhotos(
       };
     }
   }
-  const requiredIds = new Set(required.map((s) => s.id));
   const notValidated = required.filter((s) => {
     const p = photos.find((x) => x.slotId === s.id);
     return !p?.validation?.ok;
@@ -444,10 +446,41 @@ export function loadCases(): ServiceFlowCase[] {
   }
 }
 
+/**
+ * Salva no localStorage (compat) + IndexedDB Dexie + outbox CASE_UPSERT.
+ * Fotos validadas também entram na fila PHOTO_UPLOAD.
+ */
 export function saveCase(c: ServiceFlowCase) {
   const all = loadCases().filter((x) => x.id !== c.id);
   all.unshift(c);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all.slice(0, 30)));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all.slice(0, 30)));
+  } catch {
+    /* quota — Dexie ainda tenta */
+  }
+
+  void saveCaseLocal(c as unknown as Record<string, unknown> & { id: string }).catch((err) => {
+    console.warn('[HENIZA] saveCaseLocal', err);
+  });
+
+  // Enfileira fotos da etapa atual ainda não enviadas
+  const stage = c.currentStage;
+  const photos = c.stages[stage]?.photos || [];
+  for (const p of photos) {
+    if (!p.dataUrl || !p.validation?.ok) continue;
+    const photoId = `${c.id}_${stage}_${p.slotId}`;
+    void savePhotoLocal({
+      id: photoId,
+      caseId: c.id,
+      stage,
+      slotId: p.slotId,
+      dataUrl: p.dataUrl,
+      validationOk: true,
+      width: p.validation?.width,
+      height: p.validation?.height,
+      createdAt: p.capturedAt || new Date().toISOString(),
+    }).catch((err) => console.warn('[HENIZA] savePhotoLocal', err));
+  }
 }
 
 export function exportCasePayload(c: ServiceFlowCase) {
