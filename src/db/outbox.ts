@@ -1,5 +1,5 @@
 /**
- * Fila outbox Dexie — enqueue, backoff + circuit breaker, flush online.
+ * Fila outbox Dexie — enqueue, backoff + circuit breaker + JWT, flush online.
  */
 import {
   henizaDb,
@@ -14,6 +14,7 @@ import {
   exponentialBackoffMs,
 } from './backoff';
 import { syncCircuit, diagnoseCircuit } from './circuitBreaker';
+import { authHeaders } from '../services/onlineSession';
 
 const DEFAULT_MAX_ATTEMPTS = 8;
 
@@ -90,7 +91,6 @@ export async function soonestRetryAt(): Promise<number | null> {
     .anyOf(['pending', 'failed'])
     .toArray();
   const future = rows.map((r) => r.nextRetryAt).filter((t) => t > Date.now());
-  // se circuit OPEN, não tentar antes de openUntil
   const snap = syncCircuit.snapshot();
   const circuitFloor = snap.state === 'OPEN' ? snap.openUntil : 0;
   if (!future.length) {
@@ -260,6 +260,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
   }
 
   const deviceId = await getDeviceId();
+  const headers = authHeaders({ 'Idempotency-Key': item.idempotencyKey });
 
   if (item.type === 'PHOTO_UPLOAD') {
     const payload = item.payload as { photoIdRef?: string; photoId?: string };
@@ -272,10 +273,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
     try {
       const res = await fetch('/api/sync', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': item.idempotencyKey,
-        },
+        headers,
         body: JSON.stringify({
           type: item.type,
           deviceId,
@@ -292,9 +290,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
       });
       const retryAfter = res.headers.get('Retry-After');
       if (!res.ok) {
-        if (res.status >= 500 || res.status === 429) {
-          breaker.recordFailure(`HTTP ${res.status}`);
-        }
+        if (res.status >= 500 || res.status === 429) breaker.recordFailure(`HTTP ${res.status}`);
         return { ok: false, error: `HTTP ${res.status}`, retryAfter };
       }
       const json = await res.json().catch(() => ({}));
@@ -316,10 +312,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': item.idempotencyKey,
-      },
+      headers,
       body: JSON.stringify({
         type: item.type,
         deviceId,
@@ -364,7 +357,6 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
     };
   }
 
-  // Circuit OPEN: não processa lote; agenda para openUntil
   const syncSnap = syncCircuit.snapshot();
   if (syncSnap.state === 'OPEN' && Date.now() < syncSnap.openUntil) {
     return {
@@ -388,7 +380,6 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
     const breaker = circuitForType(item.type);
     const snap = breaker.snapshot();
     if (snap.state === 'OPEN' && Date.now() < snap.openUntil) {
-      // reagenda item sem consumir attempt
       await henizaDb.outbox.update(item.id, {
         status: 'pending',
         nextRetryAt: snap.openUntil,
