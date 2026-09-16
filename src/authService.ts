@@ -140,7 +140,6 @@ export async function authenticateUser(
   email: string,
   password: string
 ): Promise<{ success: boolean; message: string; user?: AuthUser; online?: boolean }> {
-  // 1) Login online (JWT)
   try {
     const { loginOnline } = await import('./services/onlineSession');
     const online = await loginOnline(email, password);
@@ -162,7 +161,7 @@ export async function authenticateUser(
       };
     }
   } catch {
-    /* fallback local */
+    /* local */
   }
 
   const users = loadUsers();
@@ -185,13 +184,40 @@ export async function authenticateUser(
   return { success: true, message: 'Login local (offline).', user: sessionUser, online: false };
 }
 
-export function clearAuthSession(): void {
+export function setRequestStatus(
+  userId: string,
+  newStatus: 'aprovado' | 'recusado'
+): { success: boolean } {
+  const users = loadUsers();
+  const idx = users.findIndex((u) => u.id === userId);
+  if (idx < 0) return { success: false };
+  users[idx].status = newStatus;
+  users[idx].reviewedAt = new Date().toISOString();
+  saveUsers(users);
+  return { success: true };
+}
+
+export function deleteUserRequest(userId: string): boolean {
+  const users = loadUsers().filter((u) => u.id !== userId);
+  saveUsers(users);
+  return true;
+}
+
+export function logout(): void {
   saveSession(null);
   try {
     void import('./services/onlineSession').then((m) => m.clearOnlineSession());
   } catch {
     /* */
   }
+}
+
+export function clearAuthSession(): void {
+  logout();
+}
+
+export async function migrateFromLegacyIfNeeded(): Promise<void> {
+  /* no-op compat */
 }
 
 export async function reviewUserRequest(
