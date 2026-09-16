@@ -1,12 +1,12 @@
 /**
- * Memória por placa/VIN — histórico, reincidência, baseline PID + feed online.
+ * Memória por placa/VIN — via StoragePort (Dexie hoje, SQLite depois).
  */
-import {
-  henizaDb,
-  type VehicleProfileRow,
-  type DiagnosisEventRow,
-  type PidBaselineRow,
+import type {
+  VehicleProfileRow,
+  DiagnosisEventRow,
+  PidBaselineRow,
 } from '../db/henizaDb';
+import { getStorage } from '../storage';
 
 const DTC_RE = /\b([PCBU][0-9A-F]{4})\b/gi;
 
@@ -59,7 +59,8 @@ export async function touchVehicleProfile(input: {
   const id = vehicleKey(input.plate || '', input.chassis || '');
   if (!id) return null;
   const now = new Date().toISOString();
-  const prev = await henizaDb.vehicleProfiles.get(id);
+  const storage = getStorage();
+  const prev = await storage.getVehicleProfile(id);
   const row: VehicleProfileRow = {
     id,
     plate: normalizePlate(input.plate || prev?.plate || ''),
@@ -75,7 +76,7 @@ export async function touchVehicleProfile(input: {
     const gap = Date.now() - new Date(prev.lastSeenAt).getTime();
     row.visitCount = prev.visitCount + (gap > 6 * 3600 * 1000 ? 1 : 0);
   }
-  await henizaDb.vehicleProfiles.put(row);
+  await storage.putVehicleProfile(row);
   return row;
 }
 
@@ -120,7 +121,7 @@ export async function recordDiagnosisEvent(input: {
     source: input.source || 'OficIA',
     notes: input.diagnosticNotes?.slice(0, 500),
   };
-  await henizaDb.diagnosisEvents.add(event);
+  await getStorage().addDiagnosisEvent(event);
 
   try {
     const { realtimeFeed } = await import('./realtimeFeed');
@@ -153,7 +154,7 @@ export type CodeRecurrence = {
 };
 
 export async function getCodeRecurrence(vehicleId: string): Promise<CodeRecurrence[]> {
-  const events = await henizaDb.diagnosisEvents.where('vehicleId').equals(vehicleId).sortBy('at');
+  const events = await getStorage().listDiagnosisEventsByVehicle(vehicleId);
   const map = new Map<
     string,
     { count: number; firstAt: string; lastAt: string; kmFirst?: number; kmLast?: number }
@@ -210,12 +211,12 @@ export async function getVehicleTimeline(
 }> {
   const id = vehicleKey(plate, chassis);
   if (!id) return { profile: null, events: [], recurrence: [], baselines: [] };
-  const profile = (await henizaDb.vehicleProfiles.get(id)) || null;
-  const events = await henizaDb.diagnosisEvents.where('vehicleId').equals(id).reverse().sortBy('at');
-  events.reverse();
+  const storage = getStorage();
+  const profile = (await storage.getVehicleProfile(id)) || null;
+  const events = await storage.listDiagnosisEventsByVehicle(id);
   const sorted = events.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
   const recurrence = await getCodeRecurrence(id);
-  const baselines = await henizaDb.pidBaselines.where('vehicleId').equals(id).toArray();
+  const baselines = await storage.listPidBaselinesByVehicle(id);
   return { profile, events: sorted, recurrence, baselines };
 }
 
@@ -227,13 +228,14 @@ export async function updatePidBaselines(
   const id = vehicleKey(plate, chassis);
   if (!id || !samples?.length) return [];
   await touchVehicleProfile({ plate, chassis });
+  const storage = getStorage();
   const out: PidBaselineRow[] = [];
   const now = new Date().toISOString();
   for (const s of samples) {
     if (s.value == null || Number.isNaN(Number(s.value))) continue;
     const value = Number(s.value);
     const rowId = `${id}|${s.id}`;
-    const prev = await henizaDb.pidBaselines.get(rowId);
+    const prev = await storage.getPidBaseline(rowId);
     if (!prev) {
       const row: PidBaselineRow = {
         id: rowId,
@@ -249,7 +251,7 @@ export async function updatePidBaselines(
         lastValue: value,
         updatedAt: now,
       };
-      await henizaDb.pidBaselines.put(row);
+      await storage.putPidBaseline(row);
       out.push(row);
       continue;
     }
@@ -270,7 +272,7 @@ export async function updatePidBaselines(
       pidName: s.name || prev.pidName,
       updatedAt: now,
     };
-    await henizaDb.pidBaselines.put(row);
+    await storage.putPidBaseline(row);
     out.push(row);
   }
   return out;
