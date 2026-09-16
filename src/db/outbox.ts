@@ -1,5 +1,5 @@
 /**
- * Fila outbox Dexie — enqueue, backoff exponencial + jitter, flush online.
+ * Fila outbox Dexie — enqueue, backoff + circuit breaker, flush online.
  */
 import {
   henizaDb,
@@ -10,16 +10,20 @@ import {
   type LocalPhotoMeta,
 } from './henizaDb';
 import {
-  nextRetryAt,
   resolveRetryDelayMs,
   exponentialBackoffMs,
 } from './backoff';
+import { syncCircuit, diagnoseCircuit } from './circuitBreaker';
 
 const DEFAULT_MAX_ATTEMPTS = 8;
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return `obx-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function circuitForType(type: OutboxType) {
+  return type === 'diagnosis' || type === 'DIAGNOSIS_ENRICH' ? diagnoseCircuit : syncCircuit;
 }
 
 export type EnqueueInput = {
@@ -48,7 +52,6 @@ export async function enqueueOutbox(input: EnqueueInput): Promise<OutboxItem> {
       payload: input.payload,
       updatedAt: now,
       status: 'pending',
-      // reenqueue imediato (não herda backoff antigo)
       nextRetryAt: Date.now(),
     };
     await henizaDb.outbox.put(updated);
@@ -81,17 +84,20 @@ export async function listPending(limit = 50): Promise<OutboxItem[]> {
   return rows.filter((r) => r.nextRetryAt <= now).slice(0, limit);
 }
 
-/** Menor nextRetryAt entre itens ainda aguardando (para agendar timer). */
 export async function soonestRetryAt(): Promise<number | null> {
   const rows = await henizaDb.outbox
     .where('status')
     .anyOf(['pending', 'failed'])
     .toArray();
-  const future = rows
-    .map((r) => r.nextRetryAt)
-    .filter((t) => t > Date.now());
-  if (!future.length) return null;
-  return Math.min(...future);
+  const future = rows.map((r) => r.nextRetryAt).filter((t) => t > Date.now());
+  // se circuit OPEN, não tentar antes de openUntil
+  const snap = syncCircuit.snapshot();
+  const circuitFloor = snap.state === 'OPEN' ? snap.openUntil : 0;
+  if (!future.length) {
+    return circuitFloor > Date.now() ? circuitFloor : null;
+  }
+  const minItem = Math.min(...future);
+  return Math.max(minItem, circuitFloor > Date.now() ? circuitFloor : 0) || minItem;
 }
 
 export async function countPending(): Promise<number> {
@@ -113,10 +119,6 @@ export async function markAcked(id: string): Promise<void> {
   });
 }
 
-/**
- * Registra falha e agenda próximo retry com backoff exponencial + jitter.
- * Se o servidor enviou Retry-After, respeita o maior entre local e servidor.
- */
 export async function markFailed(
   id: string,
   error: string,
@@ -131,7 +133,6 @@ export async function markFailed(
 
   await henizaDb.outbox.update(id, {
     attempts,
-    // failed esgotado fica failed; senão pending aguardando nextRetryAt
     status: exhausted ? 'failed' : 'pending',
     nextRetryAt: when,
     lastError: `${error.slice(0, 400)} | retryIn=${Math.round(delay / 1000)}s (attempt ${attempts})`,
@@ -147,7 +148,6 @@ export async function purgeAcked(olderThanMs = 7 * 24 * 3600 * 1000): Promise<nu
   return toDelete.length;
 }
 
-/** Reset manual de item failed → pending imediato */
 export async function retryNow(id: string): Promise<void> {
   await henizaDb.outbox.update(id, {
     status: 'pending',
@@ -242,11 +242,23 @@ export type OutboxFlushResult = {
   failed: number;
   remaining: number;
   nextRetryAt: number | null;
+  circuitOpen?: boolean;
+  skippedByCircuit?: number;
 };
 
 type PostResult = { ok: boolean; error?: string; retryAfter?: string | null };
 
 async function postItem(item: OutboxItem): Promise<PostResult> {
+  const breaker = circuitForType(item.type);
+  if (!breaker.canRequest()) {
+    const snap = breaker.snapshot();
+    return {
+      ok: false,
+      error: `circuit_open:${snap.name} until ${new Date(snap.openUntil).toISOString()}`,
+      retryAfter: String(Math.ceil(Math.max(0, snap.openUntil - Date.now()) / 1000)),
+    };
+  }
+
   const deviceId = await getDeviceId();
 
   if (item.type === 'PHOTO_UPLOAD') {
@@ -254,6 +266,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
     const photoId = payload.photoIdRef || payload.photoId;
     const photo = photoId ? await henizaDb.photos.get(photoId) : null;
     if (!photo?.dataUrl) {
+      breaker.recordSuccess();
       return { ok: true };
     }
     try {
@@ -279,15 +292,21 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
       });
       const retryAfter = res.headers.get('Retry-After');
       if (!res.ok) {
+        if (res.status >= 500 || res.status === 429) {
+          breaker.recordFailure(`HTTP ${res.status}`);
+        }
         return { ok: false, error: `HTTP ${res.status}`, retryAfter };
       }
       const json = await res.json().catch(() => ({}));
       if (json?.ok === false) {
+        breaker.recordFailure(String(json?.error || 'sync failed'));
         return { ok: false, error: json?.error || 'sync failed', retryAfter };
       }
       await henizaDb.photos.update(photo.id, { uploaded: true });
+      breaker.recordSuccess();
       return { ok: true };
     } catch (e: any) {
+      breaker.recordFailure(e?.message || 'network');
       return { ok: false, error: e?.message || 'network' };
     }
   }
@@ -311,18 +330,25 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
     });
     const retryAfter = res.headers.get('Retry-After');
     if (!res.ok) {
+      if (res.status >= 500 || res.status === 429) {
+        breaker.recordFailure(`HTTP ${res.status}`);
+        if (res.status === 503) breaker.trip(`HTTP 503`);
+      }
       return { ok: false, error: `HTTP ${res.status}`, retryAfter };
     }
     const json = await res.json().catch(() => ({}));
     if (json?.ok === false) {
+      breaker.recordFailure(String(json?.error || 'fail'));
       return { ok: false, error: String(json?.error || 'fail'), retryAfter };
     }
 
     if (item.type === 'CASE_UPSERT' && item.caseId) {
       await henizaDb.cases.update(item.caseId, { syncStatus: 'synced' });
     }
+    breaker.recordSuccess();
     return { ok: true };
   } catch (e: any) {
+    breaker.recordFailure(e?.message || 'network');
     return { ok: false, error: e?.message || 'network' };
   }
 }
@@ -334,20 +360,58 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
       failed: 0,
       remaining: await countPending(),
       nextRetryAt: await soonestRetryAt(),
+      circuitOpen: syncCircuit.snapshot().state === 'OPEN',
+    };
+  }
+
+  // Circuit OPEN: não processa lote; agenda para openUntil
+  const syncSnap = syncCircuit.snapshot();
+  if (syncSnap.state === 'OPEN' && Date.now() < syncSnap.openUntil) {
+    return {
+      processed: 0,
+      failed: 0,
+      remaining: await countPending(),
+      nextRetryAt: syncSnap.openUntil,
+      circuitOpen: true,
+      skippedByCircuit: await countPending(),
     };
   }
 
   const batch = await listPending(20);
   let processed = 0;
   let failed = 0;
+  let skippedByCircuit = 0;
 
   for (const item of batch) {
     if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+    const breaker = circuitForType(item.type);
+    const snap = breaker.snapshot();
+    if (snap.state === 'OPEN' && Date.now() < snap.openUntil) {
+      // reagenda item sem consumir attempt
+      await henizaDb.outbox.update(item.id, {
+        status: 'pending',
+        nextRetryAt: snap.openUntil,
+        lastError: `waiting circuit ${snap.name}`,
+        updatedAt: new Date().toISOString(),
+      });
+      skippedByCircuit++;
+      continue;
+    }
+
     await markInFlight(item.id);
     const result = await postItem(item);
     if (result.ok) {
       await markAcked(item.id);
       processed++;
+    } else if (result.error?.startsWith('circuit_open:')) {
+      await henizaDb.outbox.update(item.id, {
+        status: 'pending',
+        nextRetryAt: Date.now() + (parseInt(result.retryAfter || '30', 10) * 1000 || 30_000),
+        lastError: result.error,
+        updatedAt: new Date().toISOString(),
+      });
+      skippedByCircuit++;
     } else {
       await markFailed(item.id, result.error || 'unknown', result.retryAfter);
       failed++;
@@ -360,6 +424,8 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
     failed,
     remaining: await countPending(),
     nextRetryAt: await soonestRetryAt(),
+    circuitOpen: syncCircuit.snapshot().state === 'OPEN',
+    skippedByCircuit,
   };
 }
 
@@ -368,14 +434,16 @@ export async function getOutboxSnapshot() {
   return {
     pending: all.filter((i) => i.status === 'pending' || i.status === 'in_flight').length,
     failed: all.filter((i) => i.status === 'failed').length,
+    circuit: {
+      sync: syncCircuit.snapshot(),
+      diagnose: diagnoseCircuit.snapshot(),
+    },
     items: all.map((i) => ({
       ...i,
-      // ajuda UI: quanto falta para o próximo try
       waitMs: Math.max(0, i.nextRetryAt - Date.now()),
       suggestedBackoffMs: exponentialBackoffMs(i.attempts || 1),
     })),
   };
 }
 
-// re-export úteis
-export { exponentialBackoffMs, nextRetryAt, resolveRetryDelayMs };
+export { exponentialBackoffMs, resolveRetryDelayMs, syncCircuit, diagnoseCircuit };

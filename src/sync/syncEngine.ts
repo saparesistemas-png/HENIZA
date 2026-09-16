@@ -1,5 +1,5 @@
 /**
- * Sync engine — outbox Dexie + agendamento por backoff exponencial.
+ * Sync engine — outbox Dexie + backoff + circuit breaker.
  */
 import {
   flushOutbox,
@@ -7,17 +7,19 @@ import {
   enqueueOutbox,
   getOutboxSnapshot,
   soonestRetryAt,
+  syncCircuit,
   type OutboxFlushResult,
 } from '../db/outbox';
 import type { OutboxType } from '../db/henizaDb';
 
-type SyncStatus = 'idle' | 'syncing' | 'error';
+type SyncStatus = 'idle' | 'syncing' | 'error' | 'circuit_open';
 
 export interface SyncResult {
   processed: number;
   failed: number;
   remaining: number;
   nextRetryAt?: number | null;
+  circuitOpen?: boolean;
 }
 
 export type SyncListener = (status: SyncStatus, result?: SyncResult) => void;
@@ -37,7 +39,6 @@ function notify(status: SyncStatus, result?: SyncResult): void {
   });
 }
 
-/** Agenda próximo flush no horário do menor nextRetryAt da fila. */
 async function scheduleNextFlush(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (scheduledTimer) {
@@ -46,7 +47,7 @@ async function scheduleNextFlush(): Promise<void> {
   }
   const when = await soonestRetryAt();
   if (when == null) return;
-  const delay = Math.max(500, Math.min(when - Date.now(), 30 * 60 * 1000)); // cap 30min no timer
+  const delay = Math.max(500, Math.min(when - Date.now(), 30 * 60 * 1000));
   scheduledTimer = setTimeout(() => {
     scheduledTimer = null;
     if (typeof navigator === 'undefined' || navigator.onLine) {
@@ -68,10 +69,16 @@ export const syncEngine = {
     onlineHandlerAttached = true;
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => {
+        // rede voltou: não força se circuit ainda OPEN
+        const snap = syncCircuit.snapshot();
+        if (snap.state === 'OPEN' && Date.now() < snap.openUntil) {
+          console.info('[HENIZA Sync] Online, but circuit OPEN until', new Date(snap.openUntil));
+          void scheduleNextFlush();
+          return;
+        }
         console.info('[HENIZA Sync] Network restored — flushing outbox');
         void this.run();
       });
-      // safety net a cada 2 min (backoff controla o que realmente sai)
       window.setInterval(() => {
         if (navigator.onLine) void this.run();
       }, 120_000);
@@ -113,11 +120,17 @@ export const syncEngine = {
       failed: result.failed,
       remaining: result.remaining,
       nextRetryAt: result.nextRetryAt,
+      circuitOpen: result.circuitOpen,
     };
-    notify(
-      result.remaining > 0 && result.failed > 0 ? 'error' : 'idle',
-      syncResult
-    );
+
+    if (result.circuitOpen) {
+      notify('circuit_open', syncResult);
+    } else {
+      notify(
+        result.remaining > 0 && result.failed > 0 ? 'error' : 'idle',
+        syncResult
+      );
+    }
     void scheduleNextFlush();
     return syncResult;
   },
@@ -128,6 +141,15 @@ export const syncEngine = {
 
   async snapshot() {
     return getOutboxSnapshot();
+  },
+
+  circuitSnapshot() {
+    return syncCircuit.snapshot();
+  },
+
+  /** Admin / debug: fecha o circuito na mão */
+  resetCircuit() {
+    syncCircuit.reset();
   },
 
   async enqueue(type: OutboxType, payload: unknown, caseId?: string) {
