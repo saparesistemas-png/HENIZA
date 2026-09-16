@@ -1,5 +1,5 @@
 /**
- * Memória por placa/VIN — histórico, reincidência de códigos, baseline de PIDs.
+ * Memória por placa/VIN — histórico, reincidência, baseline PID + feed online.
  */
 import {
   henizaDb,
@@ -18,7 +18,6 @@ export function normalizeVin(vin: string): string {
   return (vin || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
 }
 
-/** Chave estável: VIN se ≥10 chars, senão placa */
 export function vehicleKey(plate: string, chassis: string): string | null {
   const vin = normalizeVin(chassis);
   const pl = normalizePlate(plate);
@@ -67,13 +66,11 @@ export async function touchVehicleProfile(input: {
     chassis: normalizeVin(input.chassis || prev?.chassis || ''),
     make: input.make || prev?.make || '',
     model: input.model || prev?.model || '',
-    lastOdometerKm:
-      input.odometerKm ?? prev?.lastOdometerKm,
+    lastOdometerKm: input.odometerKm ?? prev?.lastOdometerKm,
     firstSeenAt: prev?.firstSeenAt || now,
     lastSeenAt: now,
     visitCount: (prev?.visitCount || 0) + (prev ? 0 : 1),
   };
-  // increment visit only once per “session touch” if lastSeen > 6h ago
   if (prev) {
     const gap = Date.now() - new Date(prev.lastSeenAt).getTime();
     row.visitCount = prev.visitCount + (gap > 6 * 3600 * 1000 ? 1 : 0);
@@ -102,11 +99,7 @@ export async function recordDiagnosisEvent(input: {
   const codes =
     input.codes?.length
       ? input.codes.map((c) => c.toUpperCase())
-      : extractDtcCodes(
-          input.problemName,
-          input.diagnosticNotes,
-          input.symptomQuery
-        );
+      : extractDtcCodes(input.problemName, input.diagnosticNotes, input.symptomQuery);
 
   const parts = extractPartsMentioned(
     [input.problemName, input.diagnosticNotes, input.symptomQuery].filter(Boolean).join(' ')
@@ -128,6 +121,22 @@ export async function recordDiagnosisEvent(input: {
     notes: input.diagnosticNotes?.slice(0, 500),
   };
   await henizaDb.diagnosisEvents.add(event);
+
+  try {
+    const { realtimeFeed } = await import('./realtimeFeed');
+    void realtimeFeed.publish({
+      type: 'diagnosis',
+      plate: event.plate,
+      chassis: event.chassis,
+      title: event.problemName,
+      body: event.notes,
+      codes: event.codes,
+      odometerKm: event.odometerKm,
+    });
+  } catch {
+    /* offline */
+  }
+
   return event;
 }
 
@@ -140,21 +149,15 @@ export type CodeRecurrence = {
   kmLast?: number;
   kmBetween?: number;
   daysBetween?: number;
-  /** true se apareceu ≥2 vezes */
   recurring: boolean;
 };
 
 export async function getCodeRecurrence(vehicleId: string): Promise<CodeRecurrence[]> {
-  const events = await henizaDb.diagnosisEvents
-    .where('vehicleId')
-    .equals(vehicleId)
-    .sortBy('at');
-
+  const events = await henizaDb.diagnosisEvents.where('vehicleId').equals(vehicleId).sortBy('at');
   const map = new Map<
     string,
     { count: number; firstAt: string; lastAt: string; kmFirst?: number; kmLast?: number }
   >();
-
   for (const e of events) {
     for (const code of e.codes || []) {
       const cur = map.get(code);
@@ -174,7 +177,6 @@ export async function getCodeRecurrence(vehicleId: string): Promise<CodeRecurren
       }
     }
   }
-
   return Array.from(map.entries())
     .map(([code, v]) => {
       const daysBetween =
@@ -207,15 +209,9 @@ export async function getVehicleTimeline(
   baselines: PidBaselineRow[];
 }> {
   const id = vehicleKey(plate, chassis);
-  if (!id) {
-    return { profile: null, events: [], recurrence: [], baselines: [] };
-  }
+  if (!id) return { profile: null, events: [], recurrence: [], baselines: [] };
   const profile = (await henizaDb.vehicleProfiles.get(id)) || null;
-  const events = await henizaDb.diagnosisEvents
-    .where('vehicleId')
-    .equals(id)
-    .reverse()
-    .sortBy('at');
+  const events = await henizaDb.diagnosisEvents.where('vehicleId').equals(id).reverse().sortBy('at');
   events.reverse();
   const sorted = events.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
   const recurrence = await getCodeRecurrence(id);
@@ -223,7 +219,6 @@ export async function getVehicleTimeline(
   return { profile, events: sorted, recurrence, baselines };
 }
 
-/** Atualiza baseline online (média / min / max / M2 Welford) */
 export async function updatePidBaselines(
   plate: string,
   chassis: string,
@@ -234,7 +229,6 @@ export async function updatePidBaselines(
   await touchVehicleProfile({ plate, chassis });
   const out: PidBaselineRow[] = [];
   const now = new Date().toISOString();
-
   for (const s of samples) {
     if (s.value == null || Number.isNaN(Number(s.value))) continue;
     const value = Number(s.value);
@@ -292,21 +286,19 @@ export function pidDeviation(
   const ok = Math.abs(z) < 2.5 || baseline.samples < 5;
   let label = 'dentro do histórico';
   if (baseline.samples < 5) label = 'baseline ainda curta';
-  else if (Math.abs(z) >= 2.5) label = z > 0 ? 'acima do histórico deste veículo' : 'abaixo do histórico deste veículo';
+  else if (Math.abs(z) >= 2.5)
+    label = z > 0 ? 'acima do histórico deste veículo' : 'abaixo do histórico deste veículo';
   return { ok, zApprox: Math.round(z * 10) / 10, label };
 }
 
-/** Texto para injetar no relato / prompt da IA */
 export async function buildMemoryHint(plate: string, chassis: string): Promise<string> {
   const { profile, recurrence, events } = await getVehicleTimeline(plate, chassis, 5);
   if (!profile) return '';
-
   const lines: string[] = [];
   lines.push(
     `[Memória do veículo ${profile.plate || profile.chassis}] visitas≈${profile.visitCount}` +
       (profile.lastOdometerKm != null ? ` · último km ${profile.lastOdometerKm}` : '')
   );
-
   const recurring = recurrence.filter((r) => r.recurring).slice(0, 5);
   if (recurring.length) {
     lines.push(
@@ -321,7 +313,6 @@ export async function buildMemoryHint(plate: string, chassis: string): Promise<s
           .join('; ')
     );
   }
-
   if (events.length) {
     const last = events[0];
     lines.push(
@@ -329,6 +320,5 @@ export async function buildMemoryHint(plate: string, chassis: string): Promise<s
         (last.codes.length ? ` [${last.codes.join(', ')}]` : '')
     );
   }
-
   return lines.join('\n');
 }
