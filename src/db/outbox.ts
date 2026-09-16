@@ -1,5 +1,5 @@
 /**
- * Fila outbox Dexie — enqueue, retry exponencial, flush online.
+ * Fila outbox Dexie — enqueue, backoff exponencial + jitter, flush online.
  */
 import {
   henizaDb,
@@ -9,6 +9,11 @@ import {
   type LocalCaseRow,
   type LocalPhotoMeta,
 } from './henizaDb';
+import {
+  nextRetryAt,
+  resolveRetryDelayMs,
+  exponentialBackoffMs,
+} from './backoff';
 
 const DEFAULT_MAX_ATTEMPTS = 8;
 
@@ -17,17 +22,10 @@ function uuid(): string {
   return `obx-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function backoffMs(attempts: number): number {
-  // 30s, 1m, 2m, 5m, 15m, 30m, 1h, 2h
-  const steps = [30, 60, 120, 300, 900, 1800, 3600, 7200].map((s) => s * 1000);
-  return steps[Math.min(attempts, steps.length - 1)];
-}
-
 export type EnqueueInput = {
   type: OutboxType;
   payload: unknown;
   caseId?: string;
-  /** Se omitido, deriva de type+caseId+hash simples */
   idempotencyKey?: string;
   maxAttempts?: number;
 };
@@ -38,7 +36,6 @@ export async function enqueueOutbox(input: EnqueueInput): Promise<OutboxItem> {
     input.idempotencyKey ||
     `${input.type}:${input.caseId || 'na'}:${JSON.stringify(input.payload).slice(0, 80)}`;
 
-  // Dedup: se já existe pending/in_flight com mesma chave, atualiza payload
   const existing = await henizaDb.outbox
     .where('status')
     .anyOf(['pending', 'in_flight'])
@@ -51,6 +48,7 @@ export async function enqueueOutbox(input: EnqueueInput): Promise<OutboxItem> {
       payload: input.payload,
       updatedAt: now,
       status: 'pending',
+      // reenqueue imediato (não herda backoff antigo)
       nextRetryAt: Date.now(),
     };
     await henizaDb.outbox.put(updated);
@@ -83,6 +81,19 @@ export async function listPending(limit = 50): Promise<OutboxItem[]> {
   return rows.filter((r) => r.nextRetryAt <= now).slice(0, limit);
 }
 
+/** Menor nextRetryAt entre itens ainda aguardando (para agendar timer). */
+export async function soonestRetryAt(): Promise<number | null> {
+  const rows = await henizaDb.outbox
+    .where('status')
+    .anyOf(['pending', 'failed'])
+    .toArray();
+  const future = rows
+    .map((r) => r.nextRetryAt)
+    .filter((t) => t > Date.now());
+  if (!future.length) return null;
+  return Math.min(...future);
+}
+
 export async function countPending(): Promise<number> {
   return henizaDb.outbox.where('status').anyOf(['pending', 'in_flight', 'failed']).count();
 }
@@ -102,16 +113,28 @@ export async function markAcked(id: string): Promise<void> {
   });
 }
 
-export async function markFailed(id: string, error: string): Promise<void> {
+/**
+ * Registra falha e agenda próximo retry com backoff exponencial + jitter.
+ * Se o servidor enviou Retry-After, respeita o maior entre local e servidor.
+ */
+export async function markFailed(
+  id: string,
+  error: string,
+  retryAfterHeader?: string | null
+): Promise<void> {
   const item = await henizaDb.outbox.get(id);
   if (!item) return;
   const attempts = item.attempts + 1;
   const exhausted = attempts >= item.maxAttempts;
+  const delay = resolveRetryDelayMs(attempts, retryAfterHeader);
+  const when = Date.now() + delay;
+
   await henizaDb.outbox.update(id, {
     attempts,
+    // failed esgotado fica failed; senão pending aguardando nextRetryAt
     status: exhausted ? 'failed' : 'pending',
-    nextRetryAt: Date.now() + backoffMs(attempts),
-    lastError: error.slice(0, 500),
+    nextRetryAt: when,
+    lastError: `${error.slice(0, 400)} | retryIn=${Math.round(delay / 1000)}s (attempt ${attempts})`,
     updatedAt: new Date().toISOString(),
   });
 }
@@ -124,7 +147,15 @@ export async function purgeAcked(olderThanMs = 7 * 24 * 3600 * 1000): Promise<nu
   return toDelete.length;
 }
 
-/** Persistência local da OS + enfileira CASE_UPSERT */
+/** Reset manual de item failed → pending imediato */
+export async function retryNow(id: string): Promise<void> {
+  await henizaDb.outbox.update(id, {
+    status: 'pending',
+    nextRetryAt: Date.now(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export async function saveCaseLocal(snapshot: {
   id: string;
   plate?: string;
@@ -151,7 +182,6 @@ export async function saveCaseLocal(snapshot: {
   };
   await henizaDb.cases.put(row);
 
-  // Payload leve para sync (sem dataUrls)
   const light = { ...snapshot } as Record<string, unknown>;
   if (light.stages && typeof light.stages === 'object') {
     const stages = light.stages as Record<string, any>;
@@ -180,7 +210,9 @@ export async function saveCaseLocal(snapshot: {
   });
 }
 
-export async function savePhotoLocal(meta: Omit<LocalPhotoMeta, 'uploaded'> & { uploaded?: boolean }) {
+export async function savePhotoLocal(
+  meta: Omit<LocalPhotoMeta, 'uploaded'> & { uploaded?: boolean }
+) {
   const row: LocalPhotoMeta = {
     ...meta,
     uploaded: meta.uploaded ?? false,
@@ -196,7 +228,6 @@ export async function savePhotoLocal(meta: Omit<LocalPhotoMeta, 'uploaded'> & { 
         stage: row.stage,
         slotId: row.slotId,
         photoId: row.id,
-        // dataUrl só no push real; aqui referenciamos id para o worker ler do store
         photoIdRef: row.id,
         validationOk: row.validationOk,
         width: row.width,
@@ -210,9 +241,12 @@ export type OutboxFlushResult = {
   processed: number;
   failed: number;
   remaining: number;
+  nextRetryAt: number | null;
 };
 
-async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string }> {
+type PostResult = { ok: boolean; error?: string; retryAfter?: string | null };
+
+async function postItem(item: OutboxItem): Promise<PostResult> {
   const deviceId = await getDeviceId();
 
   if (item.type === 'PHOTO_UPLOAD') {
@@ -220,7 +254,6 @@ async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string
     const photoId = payload.photoIdRef || payload.photoId;
     const photo = photoId ? await henizaDb.photos.get(photoId) : null;
     if (!photo?.dataUrl) {
-      // sem binário — marca acked para não loop infinito (migração)
       return { ok: true };
     }
     try {
@@ -244,9 +277,14 @@ async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string
           },
         }),
       });
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      const retryAfter = res.headers.get('Retry-After');
+      if (!res.ok) {
+        return { ok: false, error: `HTTP ${res.status}`, retryAfter };
+      }
       const json = await res.json().catch(() => ({}));
-      if (json?.ok === false) return { ok: false, error: json?.error || 'sync failed' };
+      if (json?.ok === false) {
+        return { ok: false, error: json?.error || 'sync failed', retryAfter };
+      }
       await henizaDb.photos.update(photo.id, { uploaded: true });
       return { ok: true };
     } catch (e: any) {
@@ -254,13 +292,7 @@ async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string
     }
   }
 
-  // CASE_UPSERT, DIAGNOSIS_ENRICH, ERP, legacy types
-  const endpoint =
-    item.type === 'diagnosis'
-      ? '/api/diagnose'
-      : item.type === 'budget' || item.type === 'BUDGET_CONFIRM'
-        ? '/api/sync'
-        : '/api/sync';
+  const endpoint = item.type === 'diagnosis' ? '/api/diagnose' : '/api/sync';
 
   try {
     const res = await fetch(endpoint, {
@@ -277,9 +309,14 @@ async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string
         clientId: item.id,
       }),
     });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const retryAfter = res.headers.get('Retry-After');
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}`, retryAfter };
+    }
     const json = await res.json().catch(() => ({}));
-    if (json?.ok === false) return { ok: false, error: String(json?.error || 'fail') };
+    if (json?.ok === false) {
+      return { ok: false, error: String(json?.error || 'fail'), retryAfter };
+    }
 
     if (item.type === 'CASE_UPSERT' && item.caseId) {
       await henizaDb.cases.update(item.caseId, { syncStatus: 'synced' });
@@ -290,10 +327,14 @@ async function postItem(item: OutboxItem): Promise<{ ok: boolean; error?: string
   }
 }
 
-/** Processa a fila (chamar quando online). */
 export async function flushOutbox(): Promise<OutboxFlushResult> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return { processed: 0, failed: 0, remaining: await countPending() };
+    return {
+      processed: 0,
+      failed: 0,
+      remaining: await countPending(),
+      nextRetryAt: await soonestRetryAt(),
+    };
   }
 
   const batch = await listPending(20);
@@ -308,7 +349,7 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
       await markAcked(item.id);
       processed++;
     } else {
-      await markFailed(item.id, result.error || 'unknown');
+      await markFailed(item.id, result.error || 'unknown', result.retryAfter);
       failed++;
     }
   }
@@ -318,6 +359,7 @@ export async function flushOutbox(): Promise<OutboxFlushResult> {
     processed,
     failed,
     remaining: await countPending(),
+    nextRetryAt: await soonestRetryAt(),
   };
 }
 
@@ -326,6 +368,14 @@ export async function getOutboxSnapshot() {
   return {
     pending: all.filter((i) => i.status === 'pending' || i.status === 'in_flight').length,
     failed: all.filter((i) => i.status === 'failed').length,
-    items: all,
+    items: all.map((i) => ({
+      ...i,
+      // ajuda UI: quanto falta para o próximo try
+      waitMs: Math.max(0, i.nextRetryAt - Date.now()),
+      suggestedBackoffMs: exponentialBackoffMs(i.attempts || 1),
+    })),
   };
 }
+
+// re-export úteis
+export { exponentialBackoffMs, nextRetryAt, resolveRetryDelayMs };
