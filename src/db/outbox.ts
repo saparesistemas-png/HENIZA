@@ -1,5 +1,5 @@
 /**
- * Fila outbox Dexie — enqueue, backoff + circuit breaker + JWT, flush online.
+ * Fila outbox Dexie — enqueue, backoff + circuit breaker + JWT + OPFS fotos.
  */
 import {
   henizaDb,
@@ -15,6 +15,7 @@ import {
 } from './backoff';
 import { syncCircuit, diagnoseCircuit } from './circuitBreaker';
 import { authHeaders } from '../services/onlineSession';
+import { opfsWritePhoto, opfsReadPhoto } from './opfsPhotos';
 
 const DEFAULT_MAX_ATTEMPTS = 8;
 
@@ -217,8 +218,21 @@ export async function savePhotoLocal(
     ...meta,
     uploaded: meta.uploaded ?? false,
   };
-  await henizaDb.photos.put(row);
-  if (!row.uploaded && row.dataUrl) {
+  if (row.dataUrl) {
+    const opfs = await opfsWritePhoto(row.caseId, row.id, row.dataUrl);
+    if (opfs.ok) {
+      await henizaDb.photos.put({
+        ...row,
+        dataUrl: undefined,
+        hash: opfs.path || `opfs:${row.id}`,
+      });
+    } else {
+      await henizaDb.photos.put(row);
+    }
+  } else {
+    await henizaDb.photos.put(row);
+  }
+  if (!row.uploaded) {
     await enqueueOutbox({
       type: 'PHOTO_UPLOAD',
       caseId: row.caseId,
@@ -266,7 +280,11 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
     const payload = item.payload as { photoIdRef?: string; photoId?: string };
     const photoId = payload.photoIdRef || payload.photoId;
     const photo = photoId ? await henizaDb.photos.get(photoId) : null;
-    if (!photo?.dataUrl) {
+    let dataUrl = photo?.dataUrl;
+    if (!dataUrl && photo) {
+      dataUrl = (await opfsReadPhoto(photo.caseId, photo.id)) || undefined;
+    }
+    if (!dataUrl) {
       breaker.recordSuccess();
       return { ok: true };
     }
@@ -279,12 +297,12 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
           deviceId,
           idempotencyKey: item.idempotencyKey,
           payload: {
-            caseId: photo.caseId,
-            stage: photo.stage,
-            slotId: photo.slotId,
-            photoId: photo.id,
-            dataUrl: photo.dataUrl,
-            validationOk: photo.validationOk,
+            caseId: photo!.caseId,
+            stage: photo!.stage,
+            slotId: photo!.slotId,
+            photoId: photo!.id,
+            dataUrl,
+            validationOk: photo!.validationOk,
           },
         }),
       });
@@ -298,7 +316,7 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
         breaker.recordFailure(String(json?.error || 'sync failed'));
         return { ok: false, error: json?.error || 'sync failed', retryAfter };
       }
-      await henizaDb.photos.update(photo.id, { uploaded: true });
+      await henizaDb.photos.update(photo!.id, { uploaded: true });
       breaker.recordSuccess();
       return { ok: true };
     } catch (e: any) {
@@ -322,6 +340,17 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
       }),
     });
     const retryAfter = res.headers.get('Retry-After');
+    if (res.status === 409) {
+      const json = await res.json().catch(() => ({}));
+      if (item.caseId && json?.serverRev) {
+        await henizaDb.cases.update(item.caseId, {
+          syncStatus: 'conflict',
+          rev: Number(json.serverRev),
+        });
+      }
+      breaker.recordSuccess();
+      return { ok: false, error: 'conflict' };
+    }
     if (!res.ok) {
       if (res.status >= 500 || res.status === 429) {
         breaker.recordFailure(`HTTP ${res.status}`);
@@ -336,7 +365,10 @@ async function postItem(item: OutboxItem): Promise<PostResult> {
     }
 
     if (item.type === 'CASE_UPSERT' && item.caseId) {
-      await henizaDb.cases.update(item.caseId, { syncStatus: 'synced' });
+      await henizaDb.cases.update(item.caseId, {
+        syncStatus: 'synced',
+        rev: json?.serverRev != null ? Number(json.serverRev) : undefined,
+      } as any);
     }
     breaker.recordSuccess();
     return { ok: true };
