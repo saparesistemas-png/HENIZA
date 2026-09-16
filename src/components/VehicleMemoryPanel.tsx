@@ -6,6 +6,7 @@ import {
   vehicleKey,
 } from '../services/vehicleMemory';
 import type { DiagnosisEventRow, PidBaselineRow, VehicleProfileRow } from '../db/henizaDb';
+import RealtimeFeedPanel from './RealtimeFeedPanel';
 
 type Props = {
   plate: string;
@@ -70,7 +71,7 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
               Memória do veículo
             </p>
             <p className="text-[10px] text-slate-400">
-              Histórico · reincidência · baseline PID
+              Histórico · reincidência · feed online
             </p>
           </div>
         </div>
@@ -92,6 +93,8 @@ export default function VehicleMemoryPanel({ plate, chassis }: Props) {
 
       {open && (
         <div className="px-4 pb-4 space-y-3 border-t border-tech-borda/60 pt-3">
+          <RealtimeFeedPanel plate={plate} chassis={chassis} />
+
           {profile ? (
             <p className="text-[11px] text-slate-300">
               <span className="text-white font-bold">{profile.plate || profile.chassis}</span>
