@@ -28,6 +28,7 @@ import {
   validateImageDataUrl,
   limitsForSlot,
 } from '../services/imageValidation';
+import { runEvidenceOcr, ocrMatchesSlot, type EvidenceOcrResult } from '../services/evidenceOcr';
 
 type Props = {
   plate?: string;
@@ -99,7 +100,7 @@ export default function ServiceFlowPanel({
   const startCase = () => {
     const c = createCase({ plate, chassis, make, model, odometerKm });
     update(c);
-    setSuccessToast(`OS ${c.id} aberta — fotos no padrão com validação automática.`);
+    setSuccessToast(`OS ${c.id} aberta — fotos no padrão com validação e OCR.`);
   };
 
   const onPickPhoto = async (slotId: string, file: File | null) => {
@@ -127,17 +128,31 @@ export default function ServiceFlowPanel({
         sharpness: result.metrics?.sharpness,
         errors: [] as string[],
       };
+
+      let ocrNote = '';
+      try {
+        const ocr: EvidenceOcrResult = await runEvidenceOcr(dataUrl, slotId);
+        const match = ocrMatchesSlot(slotId, ocr);
+        ocrNote = match.message;
+        if (/placa|odometro|scanner/i.test(slotId) && !match.ok) {
+          setSuccessToast('OCR: ' + match.message);
+        }
+      } catch {
+        ocrNote = '';
+      }
+
       const next = upsertPhoto(
         flow,
         stage as FlowStage,
         slotId,
         dataUrl,
-        undefined,
+        ocrNote || undefined,
         validationMeta
       );
       update(next);
       setSuccessToast(
-        `Foto OK · ${result.metrics?.width}×${result.metrics?.height} · nitidez ${result.metrics?.sharpness?.toFixed(0)}`
+        `Foto OK · ${result.metrics?.width}×${result.metrics?.height}` +
+          (ocrNote ? ` · ${ocrNote}` : '')
       );
     } catch {
       setSuccessToast('Falha ao processar/validar a imagem.');
@@ -191,7 +206,7 @@ export default function ServiceFlowPanel({
           <ClipboardList className="w-4 h-4 text-emerald-400" />
           <div>
             <p className="text-xs font-black text-white uppercase tracking-wide">
-              Fluxo OS · evidências validadas
+              Fluxo OS · evidências + OCR
             </p>
             <p className="text-[10px] text-slate-400">
               Entrada → Diagnóstico → Serviço → Conclusão → Saída
@@ -271,9 +286,6 @@ export default function ServiceFlowPanel({
                               <p className="text-[10px] text-slate-400 leading-relaxed">
                                 Padrão: {slot.pattern}
                               </p>
-                              <p className="text-[10px] text-slate-500">
-                                Enquadramento: {slot.framing}
-                              </p>
                             </div>
                             {photo && (
                               <button
@@ -295,10 +307,10 @@ export default function ServiceFlowPanel({
                               {photo.validation?.ok && (
                                 <p className="text-[10px] text-emerald-400">
                                   Validada · {photo.validation.width}×{photo.validation.height}
-                                  {photo.validation.sharpness != null
-                                    ? ` · nitidez ${Number(photo.validation.sharpness).toFixed(0)}`
-                                    : ''}
                                 </p>
+                              )}
+                              {photo.note && (
+                                <p className="text-[10px] text-cyan-300">OCR: {photo.note}</p>
                               )}
                             </>
                           )}
@@ -318,7 +330,7 @@ export default function ServiceFlowPanel({
                             className="w-full py-2 rounded-lg border border-tech-borda text-[11px] font-bold text-slate-200 flex items-center justify-center gap-1.5"
                           >
                             <Camera className="w-3.5 h-3.5" />
-                            {photo ? 'Substituir foto' : 'Capturar e validar'}
+                            {photo ? 'Substituir foto' : 'Capturar + OCR'}
                           </button>
                         </div>
                       );
