@@ -1,4 +1,15 @@
-import { offlineStore, type SyncItem } from '../store/offlineStore';
+/**
+ * Sync engine — usa outbox Dexie como fonte da fila.
+ * Mantém API subscribe/start/run compatível com o app.
+ */
+import {
+  flushOutbox,
+  countPending,
+  enqueueOutbox,
+  getOutboxSnapshot,
+  type OutboxFlushResult,
+} from '../db/outbox';
+import type { OutboxType } from '../db/henizaDb';
 
 type SyncStatus = 'idle' | 'syncing' | 'error';
 
@@ -9,8 +20,6 @@ export interface SyncResult {
 }
 
 export type SyncListener = (status: SyncStatus, result?: SyncResult) => void;
-
-const MAX_RETRIES = 5;
 
 let isRunning = false;
 let listeners: SyncListener[] = [];
@@ -26,38 +35,6 @@ function notify(status: SyncStatus, result?: SyncResult): void {
   });
 }
 
-function resolveEndpoint(type: SyncItem['type']): string | null {
-  const map: Record<SyncItem['type'], string> = {
-    diagnosis: '/api/diagnose',
-    budget: '/api/budgets',
-    stock: '/api/stock',
-    history: '/api/history',
-  };
-  return map[type] ?? null;
-}
-
-async function processItem(item: SyncItem): Promise<boolean> {
-  const endpoint = resolveEndpoint(item.type);
-  if (!endpoint) return false;
-
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(item.payload as object),
-        clientId: item.id,
-        offlineCreatedAt: item.createdAt,
-      }),
-    });
-    if (!response.ok) return false;
-    const json = await response.json();
-    return json?.ok === true || response.status === 200;
-  } catch {
-    return false;
-  }
-}
-
 export const syncEngine = {
   subscribe(listener: SyncListener): () => void {
     listeners.push(listener);
@@ -69,57 +46,64 @@ export const syncEngine = {
   start(): void {
     if (onlineHandlerAttached) return;
     onlineHandlerAttached = true;
-    window.addEventListener('online', () => {
-      console.info('[HENIZA Sync] Network restored');
-      this.run();
-    });
-    if (navigator.onLine) this.run();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        console.info('[HENIZA Sync] Network restored — flushing outbox');
+        void this.run();
+      });
+      // flush periódico leve
+      window.setInterval(() => {
+        if (navigator.onLine) void this.run();
+      }, 60_000);
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine) void this.run();
   },
 
   async run(): Promise<SyncResult> {
     if (isRunning) {
-      return { processed: 0, failed: 0, remaining: await this.remaining() };
+      return { processed: 0, failed: 0, remaining: await countPending() };
     }
-    if (!navigator.onLine) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
       notify('idle');
-      return { processed: 0, failed: 0, remaining: await this.remaining() };
+      return { processed: 0, failed: 0, remaining: await countPending() };
     }
 
     isRunning = true;
     notify('syncing');
-    let processed = 0;
-    let failed = 0;
-
+    let result: OutboxFlushResult = { processed: 0, failed: 0, remaining: 0 };
     try {
-      const queue = await offlineStore.getSyncQueue();
-      for (const item of queue) {
-        if (!navigator.onLine) break;
-        const success = await processItem(item);
-        if (success) {
-          await offlineStore.dequeue(item.id);
-          processed++;
-        } else {
-          await offlineStore.incrementRetry(item.id);
-          failed++;
-          if (item.retries + 1 >= MAX_RETRIES) {
-            await offlineStore.dequeue(item.id);
-          }
-        }
-      }
+      result = await flushOutbox();
     } catch (err) {
       console.error('[HENIZA Sync]', err);
       notify('error');
+      isRunning = false;
+      return { processed: 0, failed: 1, remaining: await countPending() };
     } finally {
       isRunning = false;
     }
 
-    const remaining = await this.remaining();
-    const result = { processed, failed, remaining };
-    notify(remaining > 0 && failed > 0 ? 'error' : 'idle', result);
-    return result;
+    const syncResult: SyncResult = {
+      processed: result.processed,
+      failed: result.failed,
+      remaining: result.remaining,
+    };
+    notify(
+      result.remaining > 0 && result.failed > 0 ? 'error' : 'idle',
+      syncResult
+    );
+    return syncResult;
   },
 
   async remaining(): Promise<number> {
-    return (await offlineStore.getSyncQueue()).length;
+    return countPending();
+  },
+
+  async snapshot() {
+    return getOutboxSnapshot();
+  },
+
+  /** Compat: enfileira item legado (diagnosis/budget/...) */
+  async enqueue(type: OutboxType, payload: unknown, caseId?: string) {
+    return enqueueOutbox({ type, payload, caseId });
   },
 };
