@@ -1,8 +1,5 @@
 /**
- * Aprovação locadora/seguradora — criar pedido, consultar e decidir via link.
- * GET  ?token=xxx  → HTML público de aprovação
- * GET  ?id=xxx     → JSON status (auth opcional)
- * POST action=create | approve | reject
+ * Aprovação locadora/seguradora — Postgres se DATABASE_URL, senão memória.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import {
@@ -11,9 +8,12 @@ import {
   getById,
   getByToken,
   listRecent,
+  healthPostgres,
+  type ApprovalRequest,
 } from './_lib/approvalStore';
 import { authFromRequest } from './_lib/authTokens';
 import { publishFeedEvent } from './_lib/realtimeStore';
+import { isPostgresEnabled } from './_lib/pg';
 
 function publicBase(req: VercelRequest): string {
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'heniza.vercel.app';
@@ -21,7 +21,15 @@ function publicBase(req: VercelRequest): string {
   return `${proto}://${host}`;
 }
 
-function htmlPage(row: NonNullable<ReturnType<typeof getByToken>>, base: string): string {
+function escapeHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function htmlPage(row: ApprovalRequest, base: string): string {
   const pending = row.status === 'pending';
   const items = (row.budgetItems || [])
     .map(
@@ -80,17 +88,9 @@ function htmlPage(row: NonNullable<ReturnType<typeof getByToken>>, base: string)
   </form>`
       : `<p class="muted">Decisão em ${escapeHtml(row.updatedAt)}${row.decidedBy ? ' por ' + escapeHtml(row.decidedBy) : ''}. ${escapeHtml(row.decisionNote || '')}</p>`
   }
-  <p class="muted" style="margin-top:16px">Link válido até ${escapeHtml(row.expiresAt)}. HENIZA OficIA.</p>
+  <p class="muted" style="margin-top:16px">Link válido até ${escapeHtml(row.expiresAt)}. Persistência: ${isPostgresEnabled() ? 'Postgres' : 'memória'}.</p>
 </div>
 </body></html>`;
-}
-
-function escapeHtml(s: string): string {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -102,12 +102,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const base = publicBase(req);
 
   if (req.method === 'GET') {
+    if (String(req.query.health || '') === '1') {
+      const h = await healthPostgres();
+      return res.status(h.ok ? 200 : 503).json({ ok: h.ok, ...h, postgresConfigured: isPostgresEnabled() });
+    }
+
     const token = String(req.query.token || '');
     const id = String(req.query.id || '');
     const list = String(req.query.list || '') === '1';
 
     if (token) {
-      const row = getByToken(token);
+      const row = await getByToken(token);
       if (!row) {
         res.status(404).setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.send('<p style="font-family:sans-serif">Pedido não encontrado ou expirado.</p>');
@@ -119,11 +124,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (list) {
       const user = authFromRequest(req);
       if (!user) return res.status(401).json({ ok: false, error: 'Login online necessário' });
-      return res.status(200).json({ ok: true, items: listRecent(50) });
+      return res.status(200).json({ ok: true, items: await listRecent(50), mode: isPostgresEnabled() ? 'postgres' : 'memory' });
     }
 
     if (id) {
-      const row = getById(id);
+      const row = await getById(id);
       if (!row) return res.status(404).json({ ok: false, error: 'not found' });
       return res.status(200).json({ ok: true, item: row });
     }
@@ -132,7 +137,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'POST') {
-    // form-urlencoded from HTML or JSON
     let body: any = req.body;
     if (typeof body === 'string') {
       try {
@@ -143,10 +147,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     body = body || {};
 
-    // form posts
     if (body.token && (body.action === 'approve' || body.action === 'reject')) {
       const decision = body.action === 'approve' ? 'approved' : 'rejected';
-      const row = decide(String(body.token), decision, body.note, body.decidedBy);
+      const row = await decide(String(body.token), decision, body.note, body.decidedBy);
       if (!row) {
         res.status(404).setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.send('<p>Pedido não encontrado.</p>');
@@ -170,8 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (body.action === 'create' || body.create) {
       const user = authFromRequest(req);
-      // allow create without auth for workshop offline demos, but prefer auth
-      const row = createApproval({
+      const row = await createApproval({
         caseId: body.caseId,
         plate: String(body.plate || 'SEM-PLACA').toUpperCase(),
         chassis: body.chassis ? String(body.chassis).toUpperCase() : undefined,
@@ -198,13 +200,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch {
         /* */
       }
-      return res.status(200).json({ ok: true, item: row, url });
+      return res.status(200).json({
+        ok: true,
+        item: row,
+        url,
+        storage: isPostgresEnabled() ? 'postgres' : 'memory',
+      });
     }
 
-    // JSON decide
     if (body.token && body.decision) {
       const decision = body.decision === 'approved' ? 'approved' : 'rejected';
-      const row = decide(String(body.token), decision, body.note, body.decidedBy);
+      const row = await decide(String(body.token), decision, body.note, body.decidedBy);
       if (!row) return res.status(404).json({ ok: false, error: 'not found' });
       return res.status(200).json({ ok: true, item: row });
     }
