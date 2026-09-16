@@ -11,6 +11,7 @@ import SystemUpdateModule from './SystemUpdateModule';
 import ServiceFlowPanel from './ServiceFlowPanel';
 import OutboxStatusBadge from './OutboxStatusBadge';
 import VehicleMemoryPanel from './VehicleMemoryPanel';
+import RentalApprovalPanel from './RentalApprovalPanel';
 import {
   recordDiagnosisEvent,
   buildMemoryHint,
@@ -253,7 +254,7 @@ export default function OficIA({
                 Ofic<span className="text-tech-destaque">IA</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Fluxo OS · memória por placa/VIN · outbox
+                Fluxo OS · memória · aprovação locadora
               </p>
             </div>
           </div>
@@ -399,36 +400,52 @@ export default function OficIA({
       </section>
 
       {aiResponse && (
-        <DiagnosisResultFlow
-          data={aiResponse}
-          vehicleLabel={`${currentMaker.name} ${selectedModelName}`}
-          plate={plate}
-          chassis={chassis}
-          whatsappShareUrl={whatsappShareUrl}
-          setSuccessToast={setSuccessToast}
-          onNewDiagnosis={handleNewDiagnosis}
-          onConfirmBudget={(items, total) => {
-            const newBudgetObj = {
-              id: `OS-${Date.now()}`,
-              cliente: `Proprietário (${plate})`,
-              veiculo: `${currentMaker.name} ${selectedModelName} - Placa: ${plate}`,
-              valor: `R$ ${total.toFixed(2)}`,
-              status: 'Aprovado',
-              data: new Date().toLocaleDateString('pt-BR'),
-              items,
-            };
-            const updatedBudgets = [newBudgetObj, ...mobileBudgets];
-            setMobileBudgets(updatedBudgets);
-            saveToStorage(inventory, maintenanceHistory, updatedBudgets);
-          }}
-          onOverrideSubmit={(mechanicNotes) => {
-            setAiResponse((prev: any) => ({
-              ...prev,
-              mechanicOverride: mechanicNotes,
-              diagnosticNotes: `${prev?.diagnosticNotes || ''}\n\n[Profissional] ${mechanicNotes}`,
-            }));
-          }}
-        />
+        <>
+          <DiagnosisResultFlow
+            data={aiResponse}
+            vehicleLabel={`${currentMaker.name} ${selectedModelName}`}
+            plate={plate}
+            chassis={chassis}
+            whatsappShareUrl={whatsappShareUrl}
+            setSuccessToast={setSuccessToast}
+            onNewDiagnosis={handleNewDiagnosis}
+            onConfirmBudget={(items, total) => {
+              const newBudgetObj = {
+                id: `OS-${Date.now()}`,
+                cliente: `Proprietário (${plate})`,
+                veiculo: `${currentMaker.name} ${selectedModelName} - Placa: ${plate}`,
+                valor: `R$ ${total.toFixed(2)}`,
+                status: 'Aprovado',
+                data: new Date().toLocaleDateString('pt-BR'),
+                items,
+              };
+              const updatedBudgets = [newBudgetObj, ...mobileBudgets];
+              setMobileBudgets(updatedBudgets);
+              saveToStorage(inventory, maintenanceHistory, updatedBudgets);
+            }}
+            onOverrideSubmit={(mechanicNotes) => {
+              setAiResponse((prev: any) => ({
+                ...prev,
+                mechanicOverride: mechanicNotes,
+                diagnosticNotes: `${prev?.diagnosticNotes || ''}\n\n[Profissional] ${mechanicNotes}`,
+              }));
+            }}
+          />
+
+          <RentalApprovalPanel
+            plate={plate}
+            chassis={chassis}
+            vehicleLabel={`${currentMaker.name} ${selectedModelName}`}
+            problemName={aiResponse.problemName}
+            diagnosticNotes={aiResponse.diagnosticNotes}
+            budgetItems={aiResponse.budgetItems}
+            budgetTotal={(aiResponse.budgetItems || []).reduce(
+              (s: number, i: any) => s + (Number(i.estimatedCost) || 0),
+              0
+            )}
+            setSuccessToast={setSuccessToast}
+          />
+        </>
       )}
     </div>
   );
