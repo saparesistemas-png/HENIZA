@@ -23,10 +23,10 @@ function publicBase(req: VercelRequest): string {
 
 function escapeHtml(s: string): string {
   return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"');
 }
 
 function htmlPage(row: ApprovalRequest, base: string): string {
@@ -155,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.send('<p>Pedido não encontrado.</p>');
       }
       try {
-        publishFeedEvent({
+        await publishFeedEvent({
           type: 'approval',
           plate: row.plate,
           chassis: row.chassis,
@@ -188,7 +188,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       const url = `${base}/api/approval?token=${row.token}`;
       try {
-        publishFeedEvent({
+        await publishFeedEvent({
           type: 'approval',
           plate: row.plate,
           chassis: row.chassis,
