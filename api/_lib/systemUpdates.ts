@@ -154,7 +154,7 @@ export function findSystemUpdates(input: {
   const matched: SystemUpdateCampaign[] = [];
 
   for (const c of SYSTEM_UPDATE_CAMPAIGNS) {
-    if (input.makes && c.makes?.length) {
+    if (c.makes?.length) {
       const make = (input.make || '').toLowerCase();
       if (!c.makes.some((m) => make.includes(m.toLowerCase()))) continue;
     }

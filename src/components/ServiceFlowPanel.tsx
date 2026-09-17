@@ -176,7 +176,7 @@ export default function ServiceFlowPanel({
     const result = tryAdvance(flow, {
       diagnosisSnapshot: diagnosisData || flow.diagnosisSnapshot || undefined,
     });
-    if (!result.ok) {
+    if (result.ok === false) {
       setSuccessToast(result.message);
       return;
     }

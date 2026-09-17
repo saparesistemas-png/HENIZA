@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import {
   searchTechnicalNetwork,
   mergeNetworkIntoDiagnosis,
+  type NetworkSearchResult,
 } from './_lib/networkSearch.js';
 import {
   evaluateFaultsSnapshot,
@@ -401,7 +402,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const validation = parseBody(req.body);
-    if (!validation.ok) {
+    if (validation.ok === false) {
       return res.status(400).json({ ok: false, error: validation.message });
     }
 
@@ -409,15 +410,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const apiKey = process.env.GEMINI_API_KEY;
     const faultEvents = faultsFromLive(payload.liveObd);
 
-    let network = {
+    let network: NetworkSearchResult = {
       summary: '',
-      sources: [] as string[],
-      hits: [] as any[],
-      queries: [] as string[],
+      sources: [],
+      hits: [],
+      queries: [],
       grounded: false,
-      torqueSpecs: undefined as any,
-      laborTimes: undefined as any,
-      temperature: undefined as any,
     };
 
     try {

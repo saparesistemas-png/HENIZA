@@ -334,14 +334,38 @@ export function isWebBluetoothAvailable(): boolean {
   return typeof navigator !== 'undefined' && !!(navigator as any).bluetooth;
 }
 
+type BluetoothCharacteristicLike = EventTarget & {
+  value?: DataView;
+  properties: { writeWithoutResponse?: boolean };
+  startNotifications(): Promise<BluetoothCharacteristicLike>;
+  writeValue(data: BufferSource): Promise<void>;
+  writeValueWithoutResponse(data: BufferSource): Promise<void>;
+};
+
+type BluetoothServiceLike = {
+  getCharacteristic(uuid: string): Promise<BluetoothCharacteristicLike>;
+};
+
+type BluetoothServerLike = {
+  getPrimaryService(uuid: string): Promise<BluetoothServiceLike>;
+};
+
+type BluetoothDeviceLike = EventTarget & {
+  name?: string;
+  gatt?: {
+    connect(): Promise<BluetoothServerLike>;
+    disconnect(): void;
+  };
+};
+
 type Listener = (snap: ObdLiveSnapshot) => void;
 
 export class ObdLiveSession {
   private state: ObdConnectionState = 'disconnected';
-  private device: BluetoothDevice | null = null;
-  private server: BluetoothRemoteGATTServer | null = null;
-  private rxChar: BluetoothRemoteGATTCharacteristic | null = null;
-  private txChar: BluetoothRemoteGATTCharacteristic | null = null;
+  private device: BluetoothDeviceLike | null = null;
+  private server: BluetoothServerLike | null = null;
+  private rxChar: BluetoothCharacteristicLike | null = null;
+  private txChar: BluetoothCharacteristicLike | null = null;
   private buffer = '';
   private samples: Partial<Record<PidId, PidSample>> = {};
   private listeners = new Set<Listener>();
@@ -411,7 +435,7 @@ export class ObdLiveSession {
 
     try {
       const optionalServices = BLE_UART_CANDIDATES.map((c) => c.service);
-      const device: BluetoothDevice = await (navigator as any).bluetooth.requestDevice({
+      const device: BluetoothDeviceLike = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices,
       });
@@ -503,7 +527,7 @@ export class ObdLiveSession {
   }
 
   private onNotify = (ev: Event) => {
-    const char = ev.target as BluetoothRemoteGATTCharacteristic;
+    const char = ev.target as BluetoothCharacteristicLike;
     const value = char.value;
     if (!value) return;
     const dec = new TextDecoder('utf-8');
